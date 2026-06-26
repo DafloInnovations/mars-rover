@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
+  ENABLE_SERIAL,
   connectMqtt,
   connectSerial,
   disconnectMqtt,
@@ -438,6 +439,10 @@ function App() {
   }, [addEvent, clearAnimationTimers]);
 
   const refreshPorts = useCallback(async () => {
+    if (!ENABLE_SERIAL) {
+      return;
+    }
+
     setConnectionBusy(true);
     try {
       const response = await getSerialPorts();
@@ -494,7 +499,9 @@ function App() {
   }, [addEvent, syncAnimationFromRoverStatus]);
 
   useEffect(() => {
-    refreshPorts();
+    if (ENABLE_SERIAL) {
+      refreshPorts();
+    }
     refreshMqttStatus(false);
     refreshRoverStatus(false);
     const timer = window.setInterval(() => setClock(new Date()), 1000);
@@ -542,6 +549,10 @@ function App() {
   };
 
   const handleConnect = async () => {
+    if (!ENABLE_SERIAL) {
+      addEvent("LINK", "Development USB Serial is disabled in this deployment.", "warning");
+      return;
+    }
     if (!selectedPort) return;
     setConnectionBusy(true);
     setConnectionState("connecting");
@@ -559,6 +570,10 @@ function App() {
   };
 
   const handleDisconnect = async () => {
+    if (!ENABLE_SERIAL) {
+      return;
+    }
+
     setConnectionBusy(true);
     try {
       await disconnectSerial();
@@ -574,6 +589,11 @@ function App() {
   };
 
   const sendCommand = async (command, source) => {
+    if (!ENABLE_SERIAL) {
+      addEvent("SERIAL", "Development USB Serial is disabled in this deployment.", "warning");
+      return;
+    }
+
     setSerialBusy(true);
     setLastCommand(command);
     if (["FORWARD", "BACKWARD", "LEFT", "RIGHT"].includes(command)) {
@@ -747,7 +767,7 @@ function App() {
       isMoving: false,
       nextWaypoint: null,
     }));
-    if (isConnected) {
+    if (ENABLE_SERIAL && isConnected) {
       await sendCommand("STOP", "MISSION");
     } else {
       addEvent("MISSION", "Simulated mission stopped", "warning");
@@ -789,7 +809,7 @@ function App() {
           </div>
         </div>
 
-        <div className="header-connection">
+        <div className={`header-connection ${ENABLE_SERIAL ? "" : "mqtt-only"}`}>
           <div className="connection-row mqtt-row">
             <div className={`connection-status ${mqttConnected ? "connected" : ""}`}>
               <span className="connection-bars">▥</span>
@@ -820,46 +840,48 @@ function App() {
             </button>
           </div>
 
-          <div className="connection-row serial-row">
-            <div className={`connection-status ${isConnected ? "connected" : ""}`}>
-              <span className="connection-bars">▦</span>
-              <strong>{isConnected ? "USB Connected" : "USB Disconnected"}</strong>
+          {ENABLE_SERIAL && (
+            <div className="connection-row serial-row">
+              <div className={`connection-status ${isConnected ? "connected" : ""}`}>
+                <span className="connection-bars">▦</span>
+                <strong>{isConnected ? "USB Connected" : "USB Disconnected"}</strong>
+              </div>
+              <div className="port-display">
+                <span>Development USB Serial</span>
+                <strong>{displayPort}</strong>
+              </div>
+              <select
+                aria-label="Serial port"
+                disabled={isConnected || connectionBusy}
+                onChange={(event) => setSelectedPort(event.target.value)}
+                value={selectedPort}
+              >
+                {ports.length === 0 && <option value="">No ports detected</option>}
+                {ports.map((port) => (
+                  <option key={port.device} value={port.device}>
+                    {port.device}
+                  </option>
+                ))}
+              </select>
+              <button disabled={connectionBusy || isConnected} onClick={refreshPorts} type="button">↻</button>
+              <button
+                className="connect-button"
+                disabled={connectionBusy || isConnected || !selectedPort}
+                onClick={handleConnect}
+                type="button"
+              >
+                Connect
+              </button>
+              <button
+                className="disconnect-button"
+                disabled={connectionBusy || !isConnected}
+                onClick={handleDisconnect}
+                type="button"
+              >
+                Disconnect
+              </button>
             </div>
-            <div className="port-display">
-              <span>Development USB Serial</span>
-              <strong>{displayPort}</strong>
-            </div>
-            <select
-              aria-label="Serial port"
-              disabled={isConnected || connectionBusy}
-              onChange={(event) => setSelectedPort(event.target.value)}
-              value={selectedPort}
-            >
-              {ports.length === 0 && <option value="">No ports detected</option>}
-              {ports.map((port) => (
-                <option key={port.device} value={port.device}>
-                  {port.device}
-                </option>
-              ))}
-            </select>
-            <button disabled={connectionBusy || isConnected} onClick={refreshPorts} type="button">↻</button>
-            <button
-              className="connect-button"
-              disabled={connectionBusy || isConnected || !selectedPort}
-              onClick={handleConnect}
-              type="button"
-            >
-              Connect
-            </button>
-            <button
-              className="disconnect-button"
-              disabled={connectionBusy || !isConnected}
-              onClick={handleDisconnect}
-              type="button"
-            >
-              Disconnect
-            </button>
-          </div>
+          )}
         </div>
 
         <div className="header-meta">
@@ -1023,38 +1045,38 @@ function App() {
             <div className="drive-pad">
               <button
                 className="drive-forward"
-                disabled={!isConnected || serialBusy}
+                disabled={!ENABLE_SERIAL || !isConnected || serialBusy}
                 onClick={() => sendCommand("FORWARD", "MANUAL")}
                 type="button"
               >↑<span>Forward</span></button>
               <button
                 className="drive-left"
-                disabled={!isConnected || serialBusy}
+                disabled={!ENABLE_SERIAL || !isConnected || serialBusy}
                 onClick={() => sendCommand("LEFT", "MANUAL")}
                 type="button"
               >←<span>Left</span></button>
               <button
                 className="drive-stop"
-                disabled={!isConnected || serialBusy}
+                disabled={!ENABLE_SERIAL || !isConnected || serialBusy}
                 onClick={() => sendCommand("STOP", "MANUAL")}
                 type="button"
               >STOP</button>
               <button
                 className="drive-right"
-                disabled={!isConnected || serialBusy}
+                disabled={!ENABLE_SERIAL || !isConnected || serialBusy}
                 onClick={() => sendCommand("RIGHT", "MANUAL")}
                 type="button"
               >→<span>Right</span></button>
               <button
                 className="drive-back"
-                disabled={!isConnected || serialBusy}
+                disabled={!ENABLE_SERIAL || !isConnected || serialBusy}
                 onClick={() => sendCommand("BACKWARD", "MANUAL")}
                 type="button"
               >↓<span>Backward</span></button>
             </div>
             <button
               className="motor-test-button"
-              disabled={!isConnected || serialBusy}
+              disabled={!ENABLE_SERIAL || !isConnected || serialBusy}
               onClick={() => sendCommand("TEST", "MANUAL")}
               type="button"
             >
@@ -1067,7 +1089,7 @@ function App() {
               {diagnosticCommands.map((diagnostic) => (
                 <button
                   className={diagnostic === "SELF_TEST" ? "self-test" : ""}
-                  disabled={!isConnected || serialBusy}
+                  disabled={!ENABLE_SERIAL || !isConnected || serialBusy}
                   key={diagnostic}
                   onClick={() => sendCommand(diagnostic, "DIAGNOSTIC")}
                   type="button"
@@ -1082,7 +1104,7 @@ function App() {
             <span className={mqttConnected ? "online" : ""} />
             {mqttConnected
               ? `MQTT mission link active · last message ${lastMqttMessage}`
-              : isConnected
+              : ENABLE_SERIAL && isConnected
                 ? `Development USB Serial · ${connectedPort}`
                 : "Simulation mode · backend mission dispatch available"}
           </div>
@@ -1092,7 +1114,7 @@ function App() {
       <footer className="system-footer">
         <span>SU-PAR1 / MISSION CONTROL</span>
         <span>LAST COMMAND: {lastCommand}</span>
-        <span>{mqttConnected ? "MQTT LINK ACTIVE" : isConnected ? "USB SERIAL FALLBACK" : "SIMULATION FALLBACK"}</span>
+        <span>{mqttConnected ? "MQTT LINK ACTIVE" : ENABLE_SERIAL && isConnected ? "USB SERIAL FALLBACK" : "SIMULATION FALLBACK"}</span>
       </footer>
 
       <aside className="mission-credit" aria-label="Mission concept and development credit">

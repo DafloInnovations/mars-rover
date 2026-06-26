@@ -95,6 +95,7 @@ Configure:
 
 ```bash
 VITE_API_BASE_URL=https://your-railway-backend-url
+VITE_ENABLE_SERIAL=false
 ```
 
 Do not include a trailing slash.
@@ -103,7 +104,11 @@ Example:
 
 ```bash
 VITE_API_BASE_URL=https://supar1-mission-control-production.up.railway.app
+VITE_ENABLE_SERIAL=false
 ```
+
+`VITE_ENABLE_SERIAL=false` prevents the hosted Vercel frontend from calling
+local USB serial endpoints such as `/serial/ports`. MQTT controls remain active.
 
 ## 5. HiveMQ environment setup
 

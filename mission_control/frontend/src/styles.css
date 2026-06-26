@@ -180,6 +180,11 @@ button {
   border-radius: 8px;
 }
 
+.header-connection.mqtt-only {
+  grid-template-rows: 1fr;
+  min-height: 46px;
+}
+
 .connection-row {
   display: grid;
   align-items: stretch;

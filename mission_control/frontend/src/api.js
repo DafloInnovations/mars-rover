@@ -1,8 +1,16 @@
-const API_BASE_URL =
+const rawApiBaseUrl =
   import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 
+export const API_BASE_URL = rawApiBaseUrl.replace(/\/+$/, "");
+export const ENABLE_SERIAL =
+  (import.meta.env.VITE_ENABLE_SERIAL ?? (import.meta.env.PROD ? "false" : "true"))
+    .toLowerCase() === "true";
+
+console.info("[Mission Control] API_BASE_URL:", API_BASE_URL);
+
 async function request(path, options = {}) {
-  const response = await fetch(`${API_BASE_URL}${path}`, options);
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  const response = await fetch(`${API_BASE_URL}${normalizedPath}`, options);
   const payload = await response.json().catch(() => ({}));
 
   if (!response.ok) {
@@ -48,6 +56,9 @@ export async function planAiMission(text) {
 }
 
 export async function getSerialPorts() {
+  if (!ENABLE_SERIAL) {
+    throw new Error("Development USB Serial is disabled in this deployment.");
+  }
   return request("/serial/ports");
 }
 
@@ -72,6 +83,9 @@ export async function getRoverStatus() {
 }
 
 export async function connectSerial(port) {
+  if (!ENABLE_SERIAL) {
+    throw new Error("Development USB Serial is disabled in this deployment.");
+  }
   return request("/serial/connect", {
     method: "POST",
     headers: {
@@ -82,12 +96,18 @@ export async function connectSerial(port) {
 }
 
 export async function disconnectSerial() {
+  if (!ENABLE_SERIAL) {
+    throw new Error("Development USB Serial is disabled in this deployment.");
+  }
   return request("/serial/disconnect", {
     method: "POST",
   });
 }
 
 export async function sendSerialCommand(command) {
+  if (!ENABLE_SERIAL) {
+    throw new Error("Development USB Serial is disabled in this deployment.");
+  }
   return request("/serial/send", {
     method: "POST",
     headers: {
