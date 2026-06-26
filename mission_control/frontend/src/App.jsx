@@ -190,24 +190,28 @@ function MarsStatus() {
 
 function ColonyMap({
   activeMission,
-  animationState,
+  animationState = {},
   connected,
 }) {
   const {
-    cargoLoaded,
-    completedSegments,
-    currentWaypoint,
-    etaSeconds,
-    habitatDelivered,
-    isMoving,
-    nextWaypoint,
-    path,
-    position,
+    cargoLoaded = false,
+    completedSegments = [],
+    currentWaypoint = "base",
+    etaSeconds = 0,
+    habitatDelivered = false,
+    isMoving = false,
+    nextWaypoint = null,
+    path: activePath = [],
+    position = mapWaypoints.base,
   } = animationState;
-  const plannedPath = getPathD(path);
-  const completedPath = getPathDWithPosition(path, completedSegments, position);
-  const progressPercent = path.length > 1
-    ? Math.min(100, Math.round((completedSegments / (path.length - 1)) * 100))
+
+  const completedSegmentCount = Array.isArray(completedSegments)
+    ? completedSegments.length
+    : Number(completedSegments) || 0;
+  const plannedPath = getPathD(activePath);
+  const completedPath = getPathDWithPosition(activePath, completedSegmentCount, position);
+  const progressPercent = activePath.length > 1
+    ? Math.min(100, Math.round((completedSegmentCount / (activePath.length - 1)) * 100))
     : 0;
   const cargoLabel = activeMission ? missionDetails[activeMission.id].cargo : "None";
   const currentLabel = mapWaypoints[currentWaypoint]?.label ?? "Unknown";
@@ -324,13 +328,13 @@ function App() {
   const [aiPlan, setAiPlan] = useState(null);
   const [animationState, setAnimationState] = useState({
     cargoLoaded: false,
-    completedSegments: 0,
+    completedSegments: [],
     currentWaypoint: "base",
     etaSeconds: 0,
     habitatDelivered: false,
     isMoving: false,
     nextWaypoint: null,
-    path: missionPaths[1],
+    path: [],
     position: mapWaypoints.base,
   });
   const animationTimers = useRef([]);
@@ -364,10 +368,15 @@ function App() {
       const currentIndex = current.path.indexOf(waypointKey);
       const idle = String(status?.state ?? "").toUpperCase() === "IDLE";
       const noMission = ["", "none", "NONE"].includes(String(status?.mission ?? "").trim());
+      const completedSegmentCount = Array.isArray(current.completedSegments)
+        ? current.completedSegments.length
+        : Number(current.completedSegments) || 0;
 
       return {
         ...current,
-        completedSegments: currentIndex >= 0 ? Math.max(current.completedSegments, currentIndex) : current.completedSegments,
+        completedSegments: currentIndex >= 0
+          ? Array.from({ length: Math.max(completedSegmentCount, currentIndex) }, (_, index) => index)
+          : current.completedSegments,
         currentWaypoint: waypointKey,
         isMoving: idle && noMission ? false : current.isMoving,
         nextWaypoint: idle && noMission ? null : current.nextWaypoint,
@@ -386,7 +395,7 @@ function App() {
 
     setAnimationState({
       cargoLoaded: false,
-      completedSegments: 0,
+      completedSegments: [],
       currentWaypoint: startWaypoint,
       etaSeconds: Math.ceil((totalSegments * missionSegmentDurationMs) / 1000),
       habitatDelivered: false,
@@ -398,21 +407,21 @@ function App() {
     addEvent("ROVER", mission.id === 5 ? "Rover departed Habitat" : "Rover departed Base", "info");
 
     path.slice(1).forEach((waypointKey, index) => {
+      const segmentNumber = index + 1;
       const timer = window.setTimeout(() => {
-        const completedSegments = index + 1;
-        const nextWaypoint = path[completedSegments + 1] ?? null;
+        const nextWaypoint = path[segmentNumber + 1] ?? null;
         const reachedPickup = details.pickup === waypointKey;
         const reachedHabitat = waypointKey === "habitat";
-        const reachedEnd = completedSegments === totalSegments;
+        const reachedEnd = segmentNumber === totalSegments;
 
         setAnimationState((current) => ({
           ...current,
           cargoLoaded: reachedHabitat
             ? false
             : current.cargoLoaded || Boolean(reachedPickup && details.cargo !== "None"),
-          completedSegments,
+          completedSegments: Array.from({ length: segmentNumber }, (_, segmentIndex) => segmentIndex),
           currentWaypoint: waypointKey,
-          etaSeconds: Math.max(0, Math.ceil(((totalSegments - completedSegments) * missionSegmentDurationMs) / 1000)),
+          etaSeconds: Math.max(0, Math.ceil(((totalSegments - segmentNumber) * missionSegmentDurationMs) / 1000)),
           habitatDelivered: current.habitatDelivered || Boolean(reachedHabitat && details.cargo !== "None"),
           isMoving: !reachedEnd,
           nextWaypoint,
@@ -432,7 +441,7 @@ function App() {
           addEvent("MISSION", "Mission Complete", "success");
           setMissionState("complete");
         }
-      }, missionSegmentDurationMs * completedSegments);
+      }, missionSegmentDurationMs * segmentNumber);
 
       animationTimers.current.push(timer);
     });
