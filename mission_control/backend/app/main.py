@@ -393,27 +393,37 @@ def create_mission(mission: MissionRequest) -> MissionResponse:
 
 @app.post("/voice-command")
 def create_voice_command(request: VoiceCommandRequest) -> dict[str, Any]:
-    """Translate recognized visitor speech into a rule-based rover mission."""
+    """Translate recognized visitor speech with Bedrock first, then rule fallback."""
 
-    matched_intent = match_voice_intent(request.text)
-    if matched_intent is None:
+    planner_source = "bedrock"
+    try:
+        plan = plan_with_bedrock(request.text)
+    except Exception as error:  # noqa: BLE001 - voice must gracefully fall back locally.
+        logger.warning("Bedrock voice planner failed; using rule fallback: %s", error)
+        planner_source = "rule_fallback"
+        plan = fallback_rule_plan(request.text)
+
+    if plan is None:
         logger.info("Unknown voice command: %s", request.text)
         return {
             "recognized_text": request.text,
             "error": "UNKNOWN_VOICE_COMMAND",
         }
 
-    intent, mission_id, mission_name = matched_intent
     mission_response = dispatch_mission(
-        MissionRequest(mission_id=mission_id, mission_name=mission_name),
+        MissionRequest(
+            mission_id=plan["mission_id"],
+            mission_name=MISSION_NAMES.get(plan["mission_id"], plan["command"]),
+        ),
     )
 
     return {
         "recognized_text": request.text,
-        "intent": intent,
-        "mission_id": mission_id,
+        "intent": plan["intent"],
+        "mission_id": plan["mission_id"],
         "command": mission_response.command,
         "dispatch_mode": mission_response.mode,
+        "planner_source": planner_source,
     }
 
 

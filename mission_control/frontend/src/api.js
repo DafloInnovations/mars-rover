@@ -1,16 +1,20 @@
 const rawApiBaseUrl =
-  import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+  import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 
 export const API_BASE_URL = rawApiBaseUrl.replace(/\/+$/, "");
 export const ENABLE_SERIAL =
   (import.meta.env.VITE_ENABLE_SERIAL ?? (import.meta.env.PROD ? "false" : "true"))
     .toLowerCase() === "true";
 
-console.info("[Mission Control] API_BASE_URL:", API_BASE_URL);
+console.log("API_BASE_URL", API_BASE_URL);
+
+export function buildApiUrl(path) {
+  const cleanPath = path.startsWith("/") ? path : `/${path}`;
+  return `${API_BASE_URL}${cleanPath}`;
+}
 
 async function request(path, options = {}) {
-  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
-  const response = await fetch(`${API_BASE_URL}${normalizedPath}`, options);
+  const response = await fetch(buildApiUrl(path), options);
   const payload = await response.json().catch(() => ({}));
 
   if (!response.ok) {
