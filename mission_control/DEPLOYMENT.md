@@ -45,7 +45,7 @@ MQTT_USERNAME=your-hivemq-username
 MQTT_PASSWORD=your-hivemq-password
 MQTT_TLS_ENABLED=true
 ROVER_ID=supar1
-FRONTEND_ORIGIN=https://your-vercel-frontend-url.vercel.app
+FRONTEND_ORIGIN=https://your-vercel-frontend-url.vercel.app,https://your-preview-url.vercel.app
 ```
 
 Optional Bedrock AI planner variables:
@@ -87,6 +87,8 @@ Install Command: npm install
 4. Add the frontend environment variable listed below.
 5. Deploy the Vercel project.
 6. Copy the final Vercel URL and add it back to Railway as `FRONTEND_ORIGIN`.
+   If you use more than one Vercel alias or preview URL, add each origin as a
+   comma-separated value.
 7. Redeploy Railway after changing `FRONTEND_ORIGIN`.
 
 ## 4. Vercel environment variables
@@ -171,7 +173,7 @@ Backend:
 
 - [ ] Railway `/health` returns `{"status":"ok"}`.
 - [ ] Railway environment variables are set.
-- [ ] `FRONTEND_ORIGIN` exactly matches the deployed Vercel URL.
+- [ ] `FRONTEND_ORIGIN` includes every deployed Vercel URL that should call the backend.
 - [ ] `POST /mqtt/connect` returns connected or connecting.
 - [ ] `GET /mqtt/status` shows the expected `mars/supar1/...` topics.
 

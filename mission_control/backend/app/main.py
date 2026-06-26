@@ -86,13 +86,17 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-frontend_origin = os.getenv("FRONTEND_ORIGIN", "").strip()
 allowed_origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
-if frontend_origin:
-    allowed_origins.append(frontend_origin)
+frontend_origins = [
+    origin.strip()
+    for origin in os.getenv("FRONTEND_ORIGIN", "").split(",")
+    if origin.strip()
+]
+allowed_origins.extend(frontend_origins)
 
 # Vite serves the local development UI from port 5173. FRONTEND_ORIGIN allows
-# the deployed Vercel frontend to call the Railway backend.
+# one or more deployed Vercel frontends to call the Railway backend. Use a
+# comma-separated list when multiple Vercel aliases/previews are active.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
