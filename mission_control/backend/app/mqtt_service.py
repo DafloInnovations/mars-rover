@@ -22,9 +22,12 @@ DEFAULT_ROVER_ID = "supar1"
 
 _client: mqtt.Client | None = None
 _connected = False
+_connecting = False
+_last_connect_attempt = 0.0
 _subscribed_topics: set[str] = set()
 _lock = RLock()
 _process_suffix = f"{os.getenv('RAILWAY_REPLICA_ID') or os.getenv('RAILWAY_DEPLOYMENT_ID') or os.getpid()}-{uuid.uuid4().hex[:8]}"
+_connect_cooldown_seconds = 2.0
 
 last_status: dict[str, Any] = {
     "connected": False,
@@ -102,7 +105,7 @@ def default_topics() -> dict[str, str]:
 def _new_client(rover_id: str) -> mqtt.Client:
     """Create a Paho MQTT client compatible with Paho 1.x and 2.x."""
 
-    client_id = f"mission-control-{rover_id}-{_process_suffix}"
+    client_id = f"mission-control-{rover_id}-{_process_suffix}-{uuid.uuid4().hex[:6]}"
     try:
         client = mqtt.Client(
             mqtt.CallbackAPIVersion.VERSION2,
@@ -123,6 +126,9 @@ def _on_connect(client: mqtt.Client, _: Any, __: Any, reason_code: Any, *___: An
 
     success = int(reason_code) == 0 if isinstance(reason_code, int) else str(reason_code) == "Success"
     with _lock:
+        if client is not _client:
+            logger.debug("Ignoring stale MQTT connect callback")
+            return
         _connected = success
         last_status["connected"] = success
         last_status["last_seen"] = _utc_now()
@@ -142,12 +148,15 @@ def _on_connect(client: mqtt.Client, _: Any, __: Any, reason_code: Any, *___: An
             _subscribed_topics.add(topic)
 
 
-def _on_disconnect(_: mqtt.Client, __: Any, reason_code: Any, *___: Any) -> None:
+def _on_disconnect(client: mqtt.Client, _: Any, reason_code: Any, *___: Any) -> None:
     """Update connection state when the broker disconnects."""
 
     global _connected
 
     with _lock:
+        if client is not _client:
+            logger.debug("Ignoring stale MQTT disconnect callback: %s", reason_code)
+            return
         _connected = False
         last_status["connected"] = False
         last_status["status"] = "offline"
@@ -209,7 +218,7 @@ def _on_message(_: mqtt.Client, __: Any, message: mqtt.MQTTMessage) -> None:
 def connect() -> dict[str, Any]:
     """Connect to the MQTT broker and subscribe to rover feedback topics."""
 
-    global _client
+    global _client, _connecting, _last_connect_attempt
 
     config = _build_config()
     with _lock:
@@ -221,6 +230,20 @@ def connect() -> dict[str, Any]:
                 "rover_id": config["rover_id"],
                 "topics": default_topics(),
             }
+
+        now = time.monotonic()
+        if _connecting or now - _last_connect_attempt < _connect_cooldown_seconds:
+            return {
+                "connected": is_connected(),
+                "broker_host": config["broker_host"],
+                "broker_port": config["broker_port"],
+                "rover_id": config["rover_id"],
+                "topics": default_topics(),
+            }
+
+        old_client = _client
+        _connecting = True
+        _last_connect_attempt = now
 
         client = _new_client(config["rover_id"])
         client.on_connect = _on_connect
@@ -235,14 +258,25 @@ def connect() -> dict[str, Any]:
 
         _client = client
 
-    client.connect(config["broker_host"], config["broker_port"], keepalive=60)
-    client.loop_start()
+    if old_client is not None:
+        try:
+            old_client.loop_stop()
+            old_client.disconnect()
+        except (OSError, RuntimeError, ValueError) as error:
+            logger.debug("Ignored stale MQTT client cleanup error: %s", error)
 
-    deadline = time.monotonic() + 2.0
-    while time.monotonic() < deadline:
-        if is_connected():
-            break
-        time.sleep(0.05)
+    try:
+        client.connect(config["broker_host"], config["broker_port"], keepalive=60)
+        client.loop_start()
+
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            if is_connected():
+                break
+            time.sleep(0.05)
+    finally:
+        with _lock:
+            _connecting = False
 
     with _lock:
         last_status["rover_id"] = config["rover_id"]
