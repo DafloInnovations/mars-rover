@@ -18,12 +18,10 @@ constexpr uint8_t kIn2Pin = 26;
 constexpr uint8_t kIn3Pin = 27;
 constexpr uint8_t kIn4Pin = 14;
 
-// BFD-1000 digital channels. GPIO34, GPIO35, and GPIO39 are input-only pins.
-constexpr uint8_t kLineSensorS1Pin = 32;
-constexpr uint8_t kLineSensorS2Pin = 33;
-constexpr uint8_t kLineSensorS3Pin = 34;
-constexpr uint8_t kLineSensorS4Pin = 35;
-constexpr uint8_t kLineSensorS5Pin = 39;
+// Three-channel line sensor digital inputs.
+constexpr uint8_t kLineSensorLeftPin = 32;
+constexpr uint8_t kLineSensorCenterPin = 33;
+constexpr uint8_t kLineSensorRightPin = 21;
 constexpr uint8_t kLineSensorBlackState = HIGH;
 
 // RC522 SPI wiring. The reader must be powered from 3.3 V only.
@@ -54,11 +52,9 @@ constexpr size_t kCommandBufferSize = 32;
 constexpr size_t kMqttCommandBufferSize = 64;
 
 MotorController motorController(kIn1Pin, kIn2Pin, kIn3Pin, kIn4Pin);
-LineSensor lineSensor(kLineSensorS1Pin,
-                      kLineSensorS2Pin,
-                      kLineSensorS3Pin,
-                      kLineSensorS4Pin,
-                      kLineSensorS5Pin,
+LineSensor lineSensor(kLineSensorLeftPin,
+                      kLineSensorCenterPin,
+                      kLineSensorRightPin,
                       kLineSensorBlackState);
 RFIDReader rfidReader(kRfidSsPin,
                       kRfidResetPin,

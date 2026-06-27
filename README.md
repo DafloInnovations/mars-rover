@@ -28,8 +28,8 @@ mars_rover/
 │   │   ├── RFIDReader.h          # RC522 reader interface
 │   │   └── RFIDReader.cpp        # SPI UID-reading implementation
 │   ├── sensors/
-│   │   ├── LineSensor.h          # Five-channel line-sensor interface
-│   │   └── LineSensor.cpp        # BFD-1000 digital input implementation
+│   │   ├── LineSensor.h          # Three-channel line-sensor interface
+│   │   └── LineSensor.cpp        # Left/center/right digital input implementation
 │   └── servo/
 │       ├── CargoServo.h          # SG90 cargo mechanism interface
 │       └── CargoServo.cpp        # ESP32 PWM servo implementation
@@ -88,7 +88,7 @@ Commands are newline-delimited and accepted at 115200 baud:
 | `RIGHT` | Pivot right |
 | `STOP` | Stop both motors |
 | `TEST` | Run the legacy v0.2 movement sequence once |
-| `LINE_TEST` | Print all five line channels every 300 ms for 20 seconds |
+| `LINE_TEST` | Print left, center, and right line channels every 300 ms for 20 seconds |
 | `RFID_TEST` | Scan for RC522 cards and print detected UIDs for 20 seconds |
 | `SERVO_OPEN` | Move the SG90 cargo servo to 90 degrees |
 | `SERVO_CLOSE` | Move the SG90 cargo servo to 0 degrees |
@@ -253,28 +253,26 @@ The backend subscribes to `mars/supar1/status`, `mars/supar1/telemetry`, and
 `mars/supar1/log`, then caches the latest rover state for the dashboard. USB
 serial remains available as a development fallback and for direct diagnostics.
 
-## BFD-1000 wiring
+## Three-channel line sensor wiring
 
-Connect the five digital BFD-1000 outputs to the ESP32 as follows:
+Connect the left, center, and right digital line-sensor outputs to the ESP32 as
+follows:
 
-| BFD-1000 signal | ESP32 GPIO |
+| Line sensor signal | ESP32 GPIO |
 |---|---:|
-| S1 | 32 |
-| S2 | 33 |
-| S3 | 34 |
-| S4 | 35 |
-| S5 | 39 |
+| Left | 32 |
+| Center | 33 |
+| Right | 21 |
 | GND | GND |
 | VCC | Module-compatible supply |
 
-GPIO34, GPIO35, and GPIO39 are input-only and do not provide internal pull-up
-or pull-down resistors. The firmware therefore uses plain `INPUT` mode and
-expects the BFD-1000 module to drive each digital channel.
+The firmware uses plain `INPUT` mode and expects the line sensor module to
+drive each digital channel.
 
 The current configuration treats digital `1` (`HIGH`) as black. Verify this
 with the actual module before autonomous line-following work; if its comparator
 polarity is reversed, change `kLineSensorBlackState` in `firmware/main.cpp` to
-`LOW`. `LineSensor::isJunction()` returns true only when all five channels
+`LOW`. `LineSensor::isJunction()` returns true only when all three channels
 equal the configured black state.
 
 ## LINE_TEST usage
@@ -286,8 +284,8 @@ seconds:
 ```text
 LINE_TEST
 ACK:LINE_TEST
-LINE:S1=0,S2=0,S3=1,S4=0,S5=0
-LINE:S1=0,S2=1,S3=1,S4=0,S5=0
+LINE:L=0,C=1,R=0
+LINE:L=0,C=1,R=1
 ...
 LINE_TEST_COMPLETE
 ```
@@ -384,7 +382,7 @@ Example output:
 ```text
 SELF_TEST
 SELF_TEST_START
-LINE:S1=0,S2=0,S3=1,S4=0,S5=0
+LINE:L=0,C=1,R=0
 RFID:UID=04A1B2C3D4
 SELF_TEST_COMPLETE
 ACK:SELF_TEST

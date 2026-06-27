@@ -4,18 +4,16 @@
 #include <Arduino.h>
 
 /**
- * @brief Five-channel digital reading returned by the BFD-1000 sensor.
+ * @brief Three-channel digital reading returned by the line sensor.
  */
 struct LineSensorReadings {
-  uint8_t s1;
-  uint8_t s2;
-  uint8_t s3;
-  uint8_t s4;
-  uint8_t s5;
+  uint8_t left;
+  uint8_t center;
+  uint8_t right;
 };
 
 /**
- * @brief Reads and reports a five-channel BFD-1000 line sensor.
+ * @brief Reads and reports a three-channel line sensor.
  *
  * GPIO assignments and the electrical state representing black are supplied
  * through the constructor, keeping this class independent of rover wiring and
@@ -26,30 +24,23 @@ class LineSensor {
   /**
    * @brief Creates a line sensor using externally supplied GPIO assignments.
    *
-   * @param s1Pin GPIO connected to sensor channel S1.
-   * @param s2Pin GPIO connected to sensor channel S2.
-   * @param s3Pin GPIO connected to sensor channel S3.
-   * @param s4Pin GPIO connected to sensor channel S4.
-   * @param s5Pin GPIO connected to sensor channel S5.
+   * @param leftPin GPIO connected to the left line sensor output.
+   * @param centerPin GPIO connected to the center line sensor output.
+   * @param rightPin GPIO connected to the right line sensor output.
    * @param blackState Digital state emitted when a channel detects black.
    */
-  LineSensor(uint8_t s1Pin,
-             uint8_t s2Pin,
-             uint8_t s3Pin,
-             uint8_t s4Pin,
-             uint8_t s5Pin,
+  LineSensor(uint8_t leftPin,
+             uint8_t centerPin,
+             uint8_t rightPin,
              uint8_t blackState = HIGH);
 
   /**
-   * @brief Configures all five sensor channels as digital inputs.
-   *
-   * Plain INPUT mode is required because ESP32 GPIO34, GPIO35, and GPIO39 do
-   * not provide internal pull-up or pull-down resistors.
+   * @brief Configures all three sensor channels as digital inputs.
    */
   void begin();
 
   /**
-   * @brief Samples all five digital sensor channels.
+   * @brief Samples all three digital sensor channels.
    *
    * @return Snapshot containing normalized zero-or-one readings.
    */
@@ -63,7 +54,7 @@ class LineSensor {
   /**
    * @brief Reports whether every channel currently detects black.
    *
-   * @return true when S1 through S5 all equal the configured black state.
+   * @return true when left, center, and right all equal the configured black state.
    */
   bool isJunction() const;
 
@@ -73,11 +64,9 @@ class LineSensor {
   bool isInitialized() const;
 
  private:
-  const uint8_t s1Pin_;
-  const uint8_t s2Pin_;
-  const uint8_t s3Pin_;
-  const uint8_t s4Pin_;
-  const uint8_t s5Pin_;
+  const uint8_t leftPin_;
+  const uint8_t centerPin_;
+  const uint8_t rightPin_;
   const uint8_t blackState_;
   bool initialized_ = false;
 };
