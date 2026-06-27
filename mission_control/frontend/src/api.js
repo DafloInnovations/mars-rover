@@ -109,9 +109,6 @@ export async function disconnectSerial() {
 }
 
 export async function sendSerialCommand(command) {
-  if (!ENABLE_SERIAL) {
-    throw new Error("Development USB Serial is disabled in this deployment.");
-  }
   return request("/serial/send", {
     method: "POST",
     headers: {

@@ -899,11 +899,6 @@ function App() {
   };
 
   const sendCommand = async (command, source) => {
-    if (!ENABLE_SERIAL) {
-      addEvent("SERIAL", "Development USB Serial is disabled in this deployment.", "warning");
-      return;
-    }
-
     setSerialBusy(true);
     setLastCommand(command);
     if (["FORWARD", "BACKWARD", "LEFT", "RIGHT"].includes(command)) {
@@ -915,14 +910,15 @@ function App() {
     } else if (["SERVO_CLOSE", "SERVO_TEST", "SELF_TEST"].includes(command)) {
       setServoState("CLOSED");
     }
-    addEvent(source, `${command} command sent`);
+    addEvent(source, `${command} command requested`);
 
     try {
       const response = await sendSerialCommand(command);
+      const dispatchMode = response.mode ?? (response.topic ? "mqtt" : response.port ? "serial" : response.status ?? "unknown");
       addEvent(
         "ACK",
-        `${response.status.toUpperCase()}: ${response.command} → ${response.port}`,
-        "success",
+        `${response.command} dispatched via ${dispatchMode.toUpperCase()}`,
+        dispatchMode === "simulated" ? "info" : "success",
       );
     } catch (error) {
       addEvent("ERROR", error.message, "error");
@@ -1077,17 +1073,15 @@ function App() {
       isMoving: false,
       nextWaypoint: null,
     }));
-    if (ENABLE_SERIAL && isConnected) {
-      await sendCommand("STOP", "MISSION");
-    } else {
-      addEvent("MISSION", "Simulated mission stopped", "warning");
-    }
+    await sendCommand("STOP", "MISSION");
     setActiveMission(null);
     setMissionState("idle");
   };
 
   const isConnected = connectionState === "connected";
   const isRoverOnline = formatStatusValue(roverStatus?.status, "offline").toLowerCase() === "online";
+  const simulationFallbackAvailable = true;
+  const canDispatchCommands = mqttConnected || isRoverOnline || simulationFallbackAvailable;
   const roverStatusLabel = formatStatusValue(roverStatus?.status, "Unknown");
   const roverFirmware = formatStatusValue(roverStatus?.firmware, "Unknown");
   const roverMission = formatStatusValue(roverStatus?.mission ?? roverStatus?.current_mission, "none");
@@ -1381,38 +1375,38 @@ function App() {
             <div className="drive-pad">
               <button
                 className="drive-forward"
-                disabled={!ENABLE_SERIAL || !isConnected || serialBusy}
+                disabled={!canDispatchCommands || serialBusy}
                 onClick={() => sendCommand("FORWARD", "MANUAL")}
                 type="button"
               >↑<span>Forward</span></button>
               <button
                 className="drive-left"
-                disabled={!ENABLE_SERIAL || !isConnected || serialBusy}
+                disabled={!canDispatchCommands || serialBusy}
                 onClick={() => sendCommand("LEFT", "MANUAL")}
                 type="button"
               >←<span>Left</span></button>
               <button
                 className="drive-stop"
-                disabled={!ENABLE_SERIAL || !isConnected || serialBusy}
+                disabled={!canDispatchCommands || serialBusy}
                 onClick={() => sendCommand("STOP", "MANUAL")}
                 type="button"
               >STOP</button>
               <button
                 className="drive-right"
-                disabled={!ENABLE_SERIAL || !isConnected || serialBusy}
+                disabled={!canDispatchCommands || serialBusy}
                 onClick={() => sendCommand("RIGHT", "MANUAL")}
                 type="button"
               >→<span>Right</span></button>
               <button
                 className="drive-back"
-                disabled={!ENABLE_SERIAL || !isConnected || serialBusy}
+                disabled={!canDispatchCommands || serialBusy}
                 onClick={() => sendCommand("BACKWARD", "MANUAL")}
                 type="button"
               >↓<span>Backward</span></button>
             </div>
             <button
               className="motor-test-button"
-              disabled={!ENABLE_SERIAL || !isConnected || serialBusy}
+              disabled={!canDispatchCommands || serialBusy}
               onClick={() => sendCommand("TEST", "MANUAL")}
               type="button"
             >
@@ -1425,7 +1419,7 @@ function App() {
               {diagnosticCommands.map((diagnostic) => (
                 <button
                   className={diagnostic === "SELF_TEST" ? "self-test" : ""}
-                  disabled={!ENABLE_SERIAL || !isConnected || serialBusy}
+                  disabled={!canDispatchCommands || serialBusy}
                   key={diagnostic}
                   onClick={() => sendCommand(diagnostic, "DIAGNOSTIC")}
                   type="button"

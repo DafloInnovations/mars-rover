@@ -185,6 +185,53 @@ def dispatch_mission(mission: MissionRequest) -> MissionResponse:
     )
 
 
+def dispatch_rover_command(command: str) -> dict[str, Any]:
+    """Dispatch a direct rover command over MQTT, serial, or simulation."""
+
+    normalized_command = command.strip().upper()
+    if not normalized_command:
+        raise ValueError("A command is required.")
+
+    mqtt_service.ensure_connected()
+
+    if mqtt_service.is_connected():
+        command_topic = mqtt_service.default_topics()["command"]
+        command_payload = {
+            "rover_id": mqtt_service.status()["rover_id"],
+            "command": normalized_command,
+        }
+        try:
+            result = mqtt_service.publish(command_topic, command_payload)
+        except (ConnectionError, RuntimeError, OSError, ValueError) as error:
+            logger.error("Command MQTT publish failed; checking serial fallback: %s", error)
+        else:
+            logger.info("MQTT command published: %s", normalized_command)
+            return {
+                "status": "sent",
+                "command": normalized_command,
+                "mode": "mqtt",
+                "topic": result["topic"],
+                "message": f"{normalized_command} published to Su-Par1 over MQTT.",
+            }
+
+    if serial_service.is_connected():
+        result = serial_service.send_command(normalized_command)
+        logger.info("Serial command sent: %s", result["command"])
+        return {
+            **result,
+            "mode": "serial",
+            "message": f"{normalized_command} sent to Su-Par1 over serial fallback.",
+        }
+
+    logger.info("Simulated rover command: %s", normalized_command)
+    return {
+        "status": "simulated",
+        "command": normalized_command,
+        "mode": "simulated",
+        "message": f"{normalized_command} queued in simulated mode; MQTT and serial are unavailable.",
+    }
+
+
 def match_voice_intent(text: str) -> tuple[str, int, str] | None:
     """Map recognized speech to one of the five current rover missions."""
 
@@ -419,17 +466,14 @@ def disconnect_serial() -> dict[str, str | bool]:
 
 @app.post("/serial/send")
 def send_serial_command(request: SerialCommandRequest) -> dict[str, Any]:
-    """Send a direct newline-delimited command to the ESP32 for development."""
+    """Send a direct rover command over MQTT, serial fallback, or simulation."""
 
     try:
-        result = serial_service.send_command(request.command)
-    except ConnectionError as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
+        result = dispatch_rover_command(request.command)
     except (SerialException, OSError, ValueError) as error:
-        logger.warning("Serial send failed: %s", error)
+        logger.warning("Command send failed: %s", error)
         raise HTTPException(status_code=400, detail=str(error)) from error
 
-    logger.info("Serial command sent: %s", result["command"])
     return result
 
 
