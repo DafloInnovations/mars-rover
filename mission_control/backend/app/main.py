@@ -126,6 +126,8 @@ def dispatch_mission(mission: MissionRequest) -> MissionResponse:
         command,
     )
 
+    mqtt_service.ensure_connected()
+
     if mqtt_service.is_connected():
         mission_topic = mqtt_service.default_topics()["mission"]
         mission_payload = {
@@ -284,6 +286,7 @@ def fallback_rule_plan(text: str) -> dict[str, Any] | None:
 def get_mqtt_status() -> dict[str, Any]:
     """Return MQTT connection state, topics, subscriptions, and cached rover data."""
 
+    mqtt_service.ensure_connected()
     return mqtt_service.status()
 
 
@@ -336,6 +339,7 @@ def publish_mqtt(request: MqttPublishRequest) -> dict[str, Any]:
 def get_rover_status() -> dict[str, Any]:
     """Return the latest rover status cached from MQTT feedback topics."""
 
+    mqtt_service.ensure_connected()
     return mqtt_service.rover_status()
 
 

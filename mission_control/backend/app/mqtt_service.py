@@ -7,6 +7,7 @@ import logging
 import os
 import ssl
 import time
+import uuid
 from datetime import UTC, datetime
 from threading import RLock
 from typing import Any
@@ -23,6 +24,7 @@ _client: mqtt.Client | None = None
 _connected = False
 _subscribed_topics: set[str] = set()
 _lock = RLock()
+_process_suffix = f"{os.getenv('RAILWAY_REPLICA_ID') or os.getenv('RAILWAY_DEPLOYMENT_ID') or os.getpid()}-{uuid.uuid4().hex[:8]}"
 
 last_status: dict[str, Any] = {
     "connected": False,
@@ -100,15 +102,18 @@ def default_topics() -> dict[str, str]:
 def _new_client(rover_id: str) -> mqtt.Client:
     """Create a Paho MQTT client compatible with Paho 1.x and 2.x."""
 
-    client_id = f"mission-control-{rover_id}"
+    client_id = f"mission-control-{rover_id}-{_process_suffix}"
     try:
-        return mqtt.Client(
+        client = mqtt.Client(
             mqtt.CallbackAPIVersion.VERSION2,
             client_id=client_id,
             clean_session=True,
         )
     except (AttributeError, TypeError):
-        return mqtt.Client(client_id=client_id, clean_session=True)
+        client = mqtt.Client(client_id=client_id, clean_session=True)
+
+    client.reconnect_delay_set(min_delay=1, max_delay=30)
+    return client
 
 
 def _on_connect(client: mqtt.Client, _: Any, __: Any, reason_code: Any, *___: Any) -> None:
@@ -249,6 +254,21 @@ def connect() -> dict[str, Any]:
         "rover_id": config["rover_id"],
         "topics": default_topics(),
     }
+
+
+def ensure_connected() -> bool:
+    """Best-effort reconnect used by read/dispatch endpoints after restarts."""
+
+    if is_connected():
+        return True
+
+    try:
+        connection = connect()
+    except (OSError, ValueError, RuntimeError) as error:
+        logger.warning("MQTT auto-reconnect failed: %s", error)
+        return False
+
+    return bool(connection["connected"])
 
 
 def disconnect() -> None:
