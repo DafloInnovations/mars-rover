@@ -52,7 +52,7 @@ Optional Bedrock AI planner variables:
 
 ```bash
 AWS_REGION=us-east-1
-BEDROCK_MODEL_ID=anthropic.claude-haiku-4-5-20251001-v1:0
+BEDROCK_MODEL_ID=us.anthropic.claude-haiku-4-5-20251001-v1:0
 ```
 
 If using Bedrock, Railway also needs AWS credentials through the standard AWS
@@ -65,8 +65,10 @@ AWS_SESSION_TOKEN=... # only if temporary credentials are used
 ```
 
 The AWS identity must have permission to call Bedrock Runtime for the selected
-model. Use an active model ID that is enabled in the selected region; legacy
-models can fail even when credentials are valid.
+model or inference profile. Some current Anthropic models require an inference
+profile ID such as `us.anthropic.claude-haiku-4-5-20251001-v1:0` instead of the
+direct model ID. Use an active profile/model that is enabled in the selected
+region; legacy models can fail even when credentials are valid.
 
 ## 3. Vercel frontend deployment steps
 

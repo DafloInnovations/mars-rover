@@ -48,7 +48,9 @@ VOICE_INTENTS = (
     ("sample", "collect_research_sample", 4, "Collect Research Sample"),
     ("rock", "collect_research_sample", 4, "Collect Research Sample"),
     ("return", "return_to_base", 5, "Return to Base"),
+    ("back", "return_to_base", 5, "Return to Base"),
     ("base", "return_to_base", 5, "Return to Base"),
+    ("bass", "return_to_base", 5, "Return to Base"),
 )
 
 MISSION_REASONS = {
@@ -67,7 +69,7 @@ MISSION_NAMES = {
     5: "Return to Base",
 }
 
-DEFAULT_BEDROCK_MODEL_ID = "anthropic.claude-haiku-4-5-20251001-v1:0"
+DEFAULT_BEDROCK_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 
 
 @asynccontextmanager
