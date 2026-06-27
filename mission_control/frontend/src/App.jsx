@@ -188,6 +188,79 @@ function MarsStatus() {
   );
 }
 
+function VoiceCommandCenter({
+  voiceListening,
+  voiceStatus,
+  recognizedText,
+  onStartVoiceCommand,
+  onExample,
+}) {
+  const examples = [
+    { label: "Deliver oxygen", icon: "O₂", phrase: "The habitat needs oxygen" },
+    { label: "Bring medicine", icon: "✚", phrase: "Astronaut needs medicine" },
+    { label: "Collect rock sample", icon: "◒", phrase: "Collect rock sample" },
+    { label: "Return to base", icon: "⌂", phrase: "Return rover to base" },
+  ];
+
+  return (
+    <Panel
+      className={`voice-center-card ${voiceListening ? "listening" : ""}`}
+      icon={<span className="voice-panel-icon" />}
+      title="Voice Command Center"
+    >
+      <div className="voice-center-header">
+        <span>Speak your command...</span>
+        <div className="voice-mini-eq" aria-hidden="true">
+          {Array.from({ length: 14 }, (_, index) => <i key={index} />)}
+        </div>
+      </div>
+
+      <button
+        aria-label="Start voice command"
+        className="voice-orb-button"
+        onClick={onStartVoiceCommand}
+        type="button"
+      >
+        <span className="voice-orb-ring" />
+        <span className="voice-eq voice-eq-left" aria-hidden="true">
+          {Array.from({ length: 12 }, (_, index) => <i key={index} />)}
+        </span>
+        <span className="voice-mic" aria-hidden="true">
+          <span className="voice-mic-capsule" />
+          <span className="voice-mic-stem" />
+          <span className="voice-mic-base" />
+        </span>
+        <span className="voice-eq voice-eq-right" aria-hidden="true">
+          {Array.from({ length: 12 }, (_, index) => <i key={index} />)}
+        </span>
+      </button>
+
+      <div className="voice-state">
+        <strong>{voiceListening ? "Listening..." : "Tap microphone"}</strong>
+        <span>{voiceListening ? "Speak now" : voiceStatus}</span>
+        {recognizedText && <em>Recognized: “{recognizedText}”</em>}
+      </div>
+
+      <div className="voice-examples">
+        <span>Try saying:</span>
+        <div>
+          {examples.map((example) => (
+            <button key={example.label} onClick={() => onExample(example.phrase)} type="button">
+              <i>{example.icon}</i>
+              {example.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="voice-tip">
+        <strong>Voice command tips:</strong>
+        <span>Try natural phrases like “The habitat needs oxygen”</span>
+      </div>
+    </Panel>
+  );
+}
+
 function ColonyMap({
   activeMission,
   animationState = {},
@@ -216,9 +289,11 @@ function ColonyMap({
   const cargoLabel = activeMission ? missionDetails[activeMission.id].cargo : "None";
   const currentLabel = mapWaypoints[currentWaypoint]?.label ?? "Unknown";
   const nextLabel = nextWaypoint ? mapWaypoints[nextWaypoint]?.label ?? "Unknown" : "--";
+  const remainingSegments = Math.max(0, activePath.length - 1 - completedSegmentCount);
+  const distanceLabel = activePath.length > 1 ? `${Math.max(0.2, remainingSegments * 0.4).toFixed(1)} km` : "--";
 
   return (
-    <Panel className="map-card" icon="⌖" title="Mars Colony Map">
+    <Panel className="map-card" icon="⌖" title="Mission Map">
       <div className="map-canvas">
         <svg
           aria-label="Mars colony route network"
@@ -279,10 +354,6 @@ function ColonyMap({
 
       <div className="map-info-strip">
         <div>
-          <span>Current Location</span>
-          <strong>{isMoving ? `En Route: ${currentLabel} → ${nextLabel}` : currentLabel}</strong>
-        </div>
-        <div>
           <span>Cargo Status</span>
           <strong>{cargoLoaded ? `${cargoLabel} Loaded` : cargoLabel === "None" ? "None" : "Awaiting Pickup"}</strong>
         </div>
@@ -295,8 +366,12 @@ function ColonyMap({
           <strong>{etaSeconds > 0 ? `00:${String(etaSeconds).padStart(2, "0")}` : "--:--"}</strong>
         </div>
         <div>
-          <span>Progress</span>
-          <strong>{progressPercent}%</strong>
+          <span>Distance</span>
+          <strong>{distanceLabel}</strong>
+        </div>
+        <div>
+          <span>Speed</span>
+          <strong>{isMoving ? "0.5 m/s" : "--"}</strong>
         </div>
       </div>
     </Panel>
@@ -798,16 +873,39 @@ function App() {
   const roverCapabilities = formatCapabilities(roverStatus?.capabilities);
   const lastMqttMessage = formatTimestamp(roverStatus?.last_seen);
   const displayPort = connectedPort || selectedPort || "No port selected";
+  const completedSegmentCount = Array.isArray(animationState.completedSegments)
+    ? animationState.completedSegments.length
+    : Number(animationState.completedSegments) || 0;
+  const activePath = Array.isArray(animationState.path) ? animationState.path : [];
+  const missionProgress = activePath.length > 1
+    ? Math.min(100, Math.round((completedSegmentCount / (activePath.length - 1)) * 100))
+    : activeMission
+      ? 0
+      : 0;
+  const currentWaypointLabel = mapWaypoints[animationState.currentWaypoint]?.label ?? roverLocation;
+  const nextWaypointLabel = animationState.nextWaypoint
+    ? mapWaypoints[animationState.nextWaypoint]?.label ?? "Unknown"
+    : activeMission
+      ? missionDetails[activeMission.id].waypoint
+      : "--";
+  const activeMissionLabel = activeMission
+    ? missionDetails[activeMission.id].label
+    : roverMission && roverMission !== "none"
+      ? roverMission
+      : "No active mission";
+  const missionPriority = activeMission ? "HIGH" : "STANDBY";
+  const missionBadge = activeMission ? `MISSION ${activeMission.id}` : "IDLE";
+  const voiceExampleToPrompt = (phrase) => {
+    setAiPrompt(phrase);
+    addEvent("VOICE", `Example selected: “${phrase}”`);
+  };
 
   return (
     <main className="mission-control">
       <header className="top-header">
         <div className="brand-block">
-          <div className="rover-logo" aria-hidden="true">
-            <span className="antenna" />
-            <span className="rover-body">▰</span>
-            <i /><i />
-          </div>
+          <button className="menu-button" type="button" aria-label="Open navigation">☰</button>
+          <div className="mars-header-icon" aria-hidden="true" />
           <div>
             <h1>Mission to Mars <em>2050</em></h1>
             <p>Su-Par1 Rover Mission Control</p>
@@ -816,81 +914,6 @@ function App() {
               Inspired by ISRO&apos;s Mangalyaan Mission
             </p>
           </div>
-        </div>
-
-        <div className={`header-connection ${ENABLE_SERIAL ? "" : "mqtt-only"}`}>
-          <div className="connection-row mqtt-row">
-            <div className={`connection-status ${mqttConnected ? "connected" : ""}`}>
-              <span className="connection-bars">▥</span>
-              <strong>MQTT {mqttConnected ? "Connected" : "Disconnected"}</strong>
-            </div>
-            <div className="port-display">
-              <span>Communication Mode</span>
-              <strong>MQTT</strong>
-            </div>
-            <button
-              className="connect-button"
-              disabled={mqttBusy || mqttConnected}
-              onClick={handleMqttConnect}
-              type="button"
-            >
-              Connect MQTT
-            </button>
-            <button
-              className="disconnect-button"
-              disabled={mqttBusy || !mqttConnected}
-              onClick={handleMqttDisconnect}
-              type="button"
-            >
-              Disconnect MQTT
-            </button>
-            <button disabled={mqttBusy} onClick={() => refreshRoverStatus(true)} type="button">
-              Refresh Rover Status
-            </button>
-          </div>
-
-          {ENABLE_SERIAL && (
-            <div className="connection-row serial-row">
-              <div className={`connection-status ${isConnected ? "connected" : ""}`}>
-                <span className="connection-bars">▦</span>
-                <strong>{isConnected ? "USB Connected" : "USB Disconnected"}</strong>
-              </div>
-              <div className="port-display">
-                <span>Development USB Serial</span>
-                <strong>{displayPort}</strong>
-              </div>
-              <select
-                aria-label="Serial port"
-                disabled={isConnected || connectionBusy}
-                onChange={(event) => setSelectedPort(event.target.value)}
-                value={selectedPort}
-              >
-                {ports.length === 0 && <option value="">No ports detected</option>}
-                {ports.map((port) => (
-                  <option key={port.device} value={port.device}>
-                    {port.device}
-                  </option>
-                ))}
-              </select>
-              <button disabled={connectionBusy || isConnected} onClick={refreshPorts} type="button">↻</button>
-              <button
-                className="connect-button"
-                disabled={connectionBusy || isConnected || !selectedPort}
-                onClick={handleConnect}
-                type="button"
-              >
-                Connect
-              </button>
-              <button
-                className="disconnect-button"
-                disabled={connectionBusy || !isConnected}
-                onClick={handleDisconnect}
-                type="button"
-              >
-                Disconnect
-              </button>
-            </div>
-          )}
         </div>
 
         <div className="header-meta">
@@ -903,41 +926,55 @@ function App() {
         </div>
       </header>
 
+      <section className="mission-overview" aria-label="Mission status">
+        <header>
+          <span>☢</span>
+          <strong>Mission Status</strong>
+        </header>
+        <div className="mission-overview-grid">
+          <div>
+            <span>Current Mission</span>
+            <strong>{activeMissionLabel}</strong>
+            <em className={activeMission ? "mission-badge active" : "mission-badge"}>{missionBadge}</em>
+            <small>Priority: <b className={activeMission ? "danger-text" : ""}>{missionPriority}</b></small>
+          </div>
+          <div>
+            <span>Mission Progress</span>
+            <strong className="large-green">{missionProgress}%</strong>
+            <div className="status-progress"><i style={{ width: `${missionProgress}%` }} /></div>
+            <small>Path Progress</small>
+          </div>
+          <div>
+            <span>Rover Status</span>
+            <strong className={isRoverOnline ? "status-live" : ""}><i />{roverStatusLabel.toUpperCase()}</strong>
+            <small>Last Seen: <b>{lastMqttMessage}</b></small>
+          </div>
+          <div>
+            <span>MQTT Status</span>
+            <strong className={mqttConnected ? "status-live" : ""}><i />{mqttConnected ? "CONNECTED" : "DISCONNECTED"}</strong>
+            <small>Broker: HiveMQ Cloud</small>
+          </div>
+          <div>
+            <span>Battery</span>
+            <strong className="large-green">{roverBattery} <i className="battery-icon" /></strong>
+          </div>
+          <div>
+            <span>Current Location</span>
+            <strong>{animationState.isMoving ? `En Route to ${nextWaypointLabel}` : currentWaypointLabel}</strong>
+            <small>Next Waypoint: <b>{nextWaypointLabel}</b></small>
+          </div>
+        </div>
+      </section>
+
       <div className="dashboard-grid">
         <aside className="left-column">
-          <MarsStatus />
-
-          <Panel icon="♙" title="Rover Status">
-            <dl className="rover-status-list">
-              <div><dt>Communication Mode</dt><dd className="good">MQTT</dd></div>
-              <div><dt>MQTT Status</dt><dd className={mqttConnected ? "good" : ""}>{mqttConnected ? "CONNECTED" : "DISCONNECTED"}</dd></div>
-              <div><dt>Rover Status</dt><dd className={isRoverOnline ? "good" : ""}>{roverStatusLabel.toUpperCase()}</dd></div>
-              <div><dt>Last MQTT Message</dt><dd>{lastMqttMessage}</dd></div>
-              <div><dt>Firmware</dt><dd>{roverFirmware}</dd></div>
-              <div><dt>Current Mission</dt><dd>{roverMission.toUpperCase()}</dd></div>
-              <div><dt>Location</dt><dd>{roverLocation}</dd></div>
-              <div><dt>Runtime State</dt><dd>{roverRuntimeState.toUpperCase()}</dd></div>
-              <div><dt>Battery</dt><dd className="good">{roverBattery} <i className="battery-icon" /></dd></div>
-              <div><dt>Wi-Fi RSSI</dt><dd>{roverWifiRssi}</dd></div>
-              <div><dt>Uptime</dt><dd>{roverUptime}</dd></div>
-              <div><dt>Capabilities</dt><dd>{roverCapabilities}</dd></div>
-              <div><dt>Motors</dt><dd>{motorState}</dd></div>
-              <div><dt>Line Sensors</dt><dd className="good">ACTIVE</dd></div>
-              <div><dt>RFID Reader</dt><dd className="good">READY</dd></div>
-              <div><dt>Servo</dt><dd>{formatStatusValue(roverStatus?.servo, servoState)}</dd></div>
-            </dl>
-          </Panel>
-
-          <Panel icon="⊕" title="Mission Status" className="mission-status-card">
-            <div className={`mission-status-value ${activeMission ? "active" : ""}`}>
-              <strong>{activeMission ? missionDetails[activeMission.id].label : "IDLE"}</strong>
-              <span>
-                {activeMission
-                  ? `${missionState.toUpperCase()} · MISSION_${activeMission.id}`
-                  : "No active mission"}
-              </span>
-            </div>
-          </Panel>
+          <VoiceCommandCenter
+            voiceListening={voiceListening}
+            voiceStatus={voiceStatus}
+            recognizedText={recognizedText}
+            onStartVoiceCommand={startVoiceCommand}
+            onExample={voiceExampleToPrompt}
+          />
         </aside>
 
         <section className="center-column">
@@ -948,21 +985,17 @@ function App() {
           />
 
           <Panel
-            className="activity-card"
-            icon="▣"
+            className="activity-card map-activity"
+            icon="⌄"
             title="Activity Log"
-            action={
-              <button className="clear-log" onClick={() => setEvents([])} type="button">
-                Clear Log
-              </button>
-            }
+            action={<button className="clear-log" onClick={() => setEvents([])} type="button">Clear Log</button>}
           >
             <div className="terminal-log" aria-live="polite">
               {events.length === 0 ? (
                 <p className="empty-log">[{clock.toLocaleTimeString([], { hour12: false })}] Awaiting Mission Control activity...</p>
               ) : (
                 events.map((event) => (
-                  <div className={`log-line ${event.level}`} key={event.id}>
+                  <div className={`log-line ${event.level} source-${event.source.toLowerCase()}`} key={event.id}>
                     <time>[{event.time}]</time>
                     <strong>{event.source}</strong>
                     <span>{event.message}</span>
@@ -974,7 +1007,7 @@ function App() {
         </section>
 
         <aside className="right-column">
-          <Panel icon="▣" title="Mission Controls">
+          <Panel icon="▣" title="Mission Control">
             <div className="mission-control-list">
               {missions.map((mission) => (
                 <button
@@ -991,17 +1024,9 @@ function App() {
               <button className="stop-mission" onClick={stopMission} type="button">
                 ■ Stop Mission
               </button>
-              <button
-                className={`voice-command-button ${voiceListening ? "listening" : ""}`}
-                onClick={startVoiceCommand}
-                type="button"
-              >
+              <button className="voice-command-button" onClick={startVoiceCommand} type="button">
                 🎙 Voice Command
               </button>
-              <div className="voice-command-status">
-                <span>{voiceStatus}</span>
-                {recognizedText && <strong>{recognizedText}</strong>}
-              </div>
             </div>
           </Panel>
 
@@ -1037,20 +1062,96 @@ function App() {
               >
                 🧠 Plan Mission
               </button>
-              <div className="ai-plan-result">
-                <span>Intent</span>
-                <strong>{aiPlan?.intent ?? "Awaiting prompt"}</strong>
-                <span>Selected Mission</span>
-                <strong>{aiPlan?.command ?? "--"}</strong>
-                <span>Reason</span>
-                <p>{aiPlan?.reason ?? "AI planner will explain the selected rover mission."}</p>
-                <span>Dispatch Mode</span>
-                <strong>{aiPlan?.dispatch_mode?.toUpperCase() ?? "--"}</strong>
-              </div>
+              {aiPlan && (
+                <div className="ai-plan-result">
+                  <span>Intent</span>
+                  <strong>{aiPlan?.intent ?? "Awaiting prompt"}</strong>
+                  <span>Selected Mission</span>
+                  <strong>{aiPlan?.command ?? "--"}</strong>
+                  <span>Reason</span>
+                  <p>{aiPlan?.reason ?? "AI planner will explain the selected rover mission."}</p>
+                  <span>Dispatch Mode</span>
+                  <strong>{aiPlan?.dispatch_mode?.toUpperCase() ?? "--"}</strong>
+                </div>
+              )}
             </div>
           </Panel>
 
-          <Panel icon="⌁" title="Manual Controls">
+          <Panel icon="♜" title="Rover Status" className="compact-rover-card">
+            <dl className="rover-status-list">
+              <div><dt>Communication Mode</dt><dd className="good">MQTT</dd></div>
+              <div><dt>MQTT Status</dt><dd className={mqttConnected ? "good" : ""}>{mqttConnected ? "CONNECTED" : "DISCONNECTED"}</dd></div>
+              <div><dt>Rover Status</dt><dd className={isRoverOnline ? "good" : ""}>{roverStatusLabel.toUpperCase()}</dd></div>
+              <div><dt>Last MQTT Message</dt><dd>{lastMqttMessage}</dd></div>
+              <div><dt>Battery</dt><dd className="good">{roverBattery} <i className="battery-icon" /></dd></div>
+              <div><dt>Wi-Fi RSSI</dt><dd>{roverWifiRssi}</dd></div>
+              <div><dt>Firmware</dt><dd>{roverFirmware}</dd></div>
+              <div><dt>Mission</dt><dd>{roverMission.toUpperCase()}</dd></div>
+              <div><dt>Location</dt><dd>{roverLocation}</dd></div>
+              <div><dt>State</dt><dd>{roverRuntimeState.toUpperCase()}</dd></div>
+              <div><dt>Uptime</dt><dd>{roverUptime}</dd></div>
+              <div><dt>Capabilities</dt><dd>{roverCapabilities}</dd></div>
+            </dl>
+            <div className="rover-wireframe" aria-hidden="true">
+              <span />
+              <i /><i /><i /><i />
+            </div>
+          </Panel>
+
+          <div className={`header-connection compact-connection ${ENABLE_SERIAL ? "" : "mqtt-only"}`}>
+            <div className="connection-row mqtt-row">
+              <div className={`connection-status ${mqttConnected ? "connected" : ""}`}>
+                <span className="connection-bars">▥</span>
+                <strong>MQTT {mqttConnected ? "Connected" : "Disconnected"}</strong>
+              </div>
+              <div className="port-display">
+                <span>Communication Mode</span>
+                <strong>MQTT</strong>
+              </div>
+              <button className="connect-button" disabled={mqttBusy || mqttConnected} onClick={handleMqttConnect} type="button">
+                Connect MQTT
+              </button>
+              <button className="disconnect-button" disabled={mqttBusy || !mqttConnected} onClick={handleMqttDisconnect} type="button">
+                Disconnect MQTT
+              </button>
+              <button disabled={mqttBusy} onClick={() => refreshRoverStatus(true)} type="button">
+                Refresh Rover Status
+              </button>
+            </div>
+
+            {ENABLE_SERIAL && (
+              <div className="connection-row serial-row">
+                <div className={`connection-status ${isConnected ? "connected" : ""}`}>
+                  <span className="connection-bars">▦</span>
+                  <strong>{isConnected ? "USB Connected" : "USB Disconnected"}</strong>
+                </div>
+                <div className="port-display">
+                  <span>Development USB Serial</span>
+                  <strong>{displayPort}</strong>
+                </div>
+                <select
+                  aria-label="Serial port"
+                  disabled={isConnected || connectionBusy}
+                  onChange={(event) => setSelectedPort(event.target.value)}
+                  value={selectedPort}
+                >
+                  {ports.length === 0 && <option value="">No ports detected</option>}
+                  {ports.map((port) => (
+                    <option key={port.device} value={port.device}>{port.device}</option>
+                  ))}
+                </select>
+                <button disabled={connectionBusy || isConnected} onClick={refreshPorts} type="button">↻</button>
+                <button className="connect-button" disabled={connectionBusy || isConnected || !selectedPort} onClick={handleConnect} type="button">
+                  Connect
+                </button>
+                <button className="disconnect-button" disabled={connectionBusy || !isConnected} onClick={handleDisconnect} type="button">
+                  Disconnect
+                </button>
+              </div>
+            )}
+          </div>
+
+          <Panel icon="⌁" title="Manual Controls" className="utility-card">
             <div className="drive-pad">
               <button
                 className="drive-forward"
@@ -1093,7 +1194,7 @@ function App() {
             </button>
           </Panel>
 
-          <Panel icon="▧" title="Diagnostics">
+          <Panel icon="▧" title="Diagnostics" className="utility-card">
             <div className="diagnostic-grid">
               {diagnosticCommands.map((diagnostic) => (
                 <button

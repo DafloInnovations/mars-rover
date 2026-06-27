@@ -87,7 +87,7 @@ Optional Amazon Bedrock AI planner variables:
 
 ```bash
 export AWS_REGION=us-east-1
-export BEDROCK_MODEL_ID=anthropic.claude-3-haiku-20240307-v1:0
+export BEDROCK_MODEL_ID=anthropic.claude-haiku-4-5-20251001-v1:0
 ```
 
 The backend uses the standard AWS credential provider chain. Configure
@@ -100,8 +100,9 @@ credentials with one of the normal AWS methods before using Bedrock, such as:
 - an IAM role if running on AWS infrastructure
 
 The AWS identity must have permission to call Bedrock Runtime for the selected
-model. If Bedrock fails or credentials are unavailable, Mission Control falls
-back to local rule-based mission matching.
+model. Use an active model ID that is enabled in your Bedrock region; legacy
+models can fail even with valid AWS credentials. If Bedrock fails or credentials
+are unavailable, Mission Control falls back to local rule-based mission matching.
 
 Default topics for `ROVER_ID=supar1`:
 

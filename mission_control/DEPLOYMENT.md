@@ -52,7 +52,7 @@ Optional Bedrock AI planner variables:
 
 ```bash
 AWS_REGION=us-east-1
-BEDROCK_MODEL_ID=anthropic.claude-3-haiku-20240307-v1:0
+BEDROCK_MODEL_ID=anthropic.claude-haiku-4-5-20251001-v1:0
 ```
 
 If using Bedrock, Railway also needs AWS credentials through the standard AWS
@@ -65,7 +65,8 @@ AWS_SESSION_TOKEN=... # only if temporary credentials are used
 ```
 
 The AWS identity must have permission to call Bedrock Runtime for the selected
-model.
+model. Use an active model ID that is enabled in the selected region; legacy
+models can fail even when credentials are valid.
 
 ## 3. Vercel frontend deployment steps
 
