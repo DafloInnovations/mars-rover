@@ -447,6 +447,14 @@ function App() {
         ? current.completedSegments.length
         : Number(current.completedSegments) || 0;
 
+      // Firmware v0.9 reports coarse simulated locations while a mission is
+      // running, often keeping location at "base" until completion. Trust the
+      // local waypoint animation while it is moving, then accept MQTT location
+      // corrections once the rover reports IDLE/no mission.
+      if (current.isMoving && !(idle && noMission)) {
+        return current;
+      }
+
       return {
         ...current,
         completedSegments: currentIndex >= 0
