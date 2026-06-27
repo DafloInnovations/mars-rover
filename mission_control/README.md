@@ -71,6 +71,9 @@ curl -X POST http://localhost:8000/mission \
 MQTT is the primary backend-to-rover transport. Mission Control publishes
 mission requests to the rover mission topic and subscribes to rover feedback
 topics so the frontend can poll cached state through `GET /rover/status`.
+The backend uses a unique MQTT client ID per process and attempts a best-effort
+auto-reconnect when `/mqtt/status`, `/rover/status`, or `/mission` is called,
+which helps Railway recover after restarts or redeploys.
 
 Required or supported environment variables:
 

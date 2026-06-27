@@ -169,6 +169,9 @@ The ESP32 does not need to know about Railway or Vercel. It only needs:
 
 The backend also connects to HiveMQ and dispatches mission commands through the
 same MQTT topics.
+The Railway backend uses a unique MQTT client ID per process and attempts
+best-effort MQTT auto-reconnect from `/mqtt/status`, `/rover/status`, and
+`/mission`, so normal dashboard polling can recover after container restarts.
 
 ## 7. Testing checklist
 
@@ -186,6 +189,7 @@ Frontend:
 - [ ] `VITE_API_BASE_URL` points to the Railway backend URL.
 - [ ] Dashboard loads without CORS errors.
 - [ ] MQTT Connect button reaches the Railway backend.
+- [ ] After a Railway redeploy, refreshing the dashboard reconnects MQTT automatically.
 - [ ] Mission buttons still call `POST /mission`.
 - [ ] Voice Command still calls `POST /voice-command`.
 - [ ] AI Mission Planner still calls `POST /ai-mission-planner`.
