@@ -43,6 +43,23 @@ const mapWaypoints = {
   habitat: { x: 900, y: 305, label: "Habitat" },
 };
 
+const routeSegments = {
+  "base>j1": ["base", { x: 250, y: 355 }, { x: 330, y: 430 }, "j1"],
+  "j1>base": ["j1", { x: 330, y: 430 }, { x: 250, y: 355 }, "base"],
+  "j1>j2": ["j1", "j2"],
+  "j2>j1": ["j2", "j1"],
+  "j2>wh-a": ["j2", "wh-a"],
+  "wh-a>j2": ["wh-a", "j2"],
+  "j2>wh-b": ["j2", { x: 720, y: 195 }, "wh-b"],
+  "wh-b>j2": ["wh-b", { x: 720, y: 195 }, "j2"],
+  "j1>wh-c": ["j1", "wh-c"],
+  "wh-c>j1": ["wh-c", "j1"],
+  "j2>habitat": ["j2", { x: 720, y: 195 }, { x: 750, y: 305 }, "habitat"],
+  "habitat>j2": ["habitat", { x: 750, y: 305 }, { x: 720, y: 195 }, "j2"],
+  "wh-b>habitat": ["wh-b", { x: 720, y: 195 }, { x: 750, y: 305 }, "habitat"],
+  "habitat>wh-b": ["habitat", { x: 750, y: 305 }, { x: 720, y: 195 }, "wh-b"],
+};
+
 const missionPaths = {
   1: ["base", "j1", "j2", "wh-a", "j2", "habitat"],
   2: ["base", "j1", "j2", "wh-b", "j2", "habitat"],
@@ -95,18 +112,38 @@ function getPathD(points) {
   if (points.length === 0) return "";
   return points
     .map((point, index) => {
-      const waypoint = mapWaypoints[point];
+      const waypoint = typeof point === "string" ? mapWaypoints[point] : point;
       return `${index === 0 ? "M" : "L"}${waypoint.x} ${waypoint.y}`;
     })
     .join(" ");
 }
 
-function getPathDWithPosition(points, completedSegments, position) {
-  if (points.length === 0) return "";
-  const completedPoints = points.slice(0, Math.min(completedSegments + 1, points.length));
-  const d = getPathD(completedPoints);
-  if (!position || completedSegments >= points.length - 1) return d;
-  return `${d} L${position.x} ${position.y}`;
+function resolveRoutePoint(point) {
+  return typeof point === "string" ? mapWaypoints[point] : point;
+}
+
+function getRoutePointsForWaypointPath(path, segmentLimit = path.length - 1) {
+  const routePoints = [];
+  const safeSegmentLimit = Math.max(0, Math.min(segmentLimit, path.length - 1));
+
+  for (let index = 0; index < safeSegmentLimit; index += 1) {
+    const from = path[index];
+    const to = path[index + 1];
+    const segment = routeSegments[`${from}>${to}`] ?? [from, to];
+    const resolvedSegment = segment.map(resolveRoutePoint);
+
+    if (routePoints.length > 0) {
+      resolvedSegment.shift();
+    }
+
+    routePoints.push(...resolvedSegment);
+  }
+
+  return routePoints;
+}
+
+function getRouteDForWaypointPath(path, segmentLimit = path.length - 1) {
+  return getPathD(getRoutePointsForWaypointPath(path, segmentLimit));
 }
 
 function formatStatusValue(value, fallback = "Unknown") {
@@ -281,8 +318,8 @@ function ColonyMap({
   const completedSegmentCount = Array.isArray(completedSegments)
     ? completedSegments.length
     : Number(completedSegments) || 0;
-  const plannedPath = getPathD(activePath);
-  const completedPath = getPathDWithPosition(activePath, completedSegmentCount, position);
+  const plannedPath = getRouteDForWaypointPath(activePath);
+  const completedPath = getRouteDForWaypointPath(activePath, completedSegmentCount);
   const progressPercent = activePath.length > 1
     ? Math.min(100, Math.round((completedSegmentCount / (activePath.length - 1)) * 100))
     : 0;
@@ -306,7 +343,6 @@ function ColonyMap({
           <path className="route planned" d="M500 430 L500 525" />
           <path className="route planned" d="M720 195 L720 130" />
           <path className="route planned" d="M750 305 L900 305" />
-          <path className="route completed" d="M120 355 L250 355 L330 430 L500 430 L500 195 L300 195" />
           {plannedPath && <path className="mission-route planned" d={plannedPath} />}
           {completedPath && <path className="mission-route completed" d={completedPath} />}
           <circle className="junction" cx="500" cy="430" r="7" />
