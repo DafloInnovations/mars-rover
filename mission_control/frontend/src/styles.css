@@ -766,7 +766,7 @@ button {
   border-radius: 50%;
   box-shadow: 0 0 0 6px rgba(255, 167, 30, 0.18), 0 0 20px #ff8a19;
   z-index: 2;
-  transition: left 1.55s ease-in-out, top 1.55s ease-in-out;
+  transition: none;
 }
 
 .rover-marker.live {

@@ -56,15 +56,23 @@ const routeSegments = {
   "wh-c>j1": ["wh-c", "j1"],
   "j2>habitat": ["j2", { x: 720, y: 195 }, { x: 750, y: 305 }, "habitat"],
   "habitat>j2": ["habitat", { x: 750, y: 305 }, { x: 720, y: 195 }, "j2"],
-  "wh-b>habitat": ["wh-b", { x: 720, y: 195 }, { x: 750, y: 305 }, "habitat"],
-  "habitat>wh-b": ["habitat", { x: 750, y: 305 }, { x: 720, y: 195 }, "wh-b"],
+};
+
+const validRoadGraph = {
+  base: ["j1"],
+  j1: ["base", "j2", "wh-c"],
+  j2: ["j1", "wh-a", "wh-b", "habitat"],
+  "wh-a": ["j2"],
+  "wh-b": ["j2"],
+  "wh-c": ["j1"],
+  habitat: ["j2"],
 };
 
 const missionPaths = {
   1: ["base", "j1", "j2", "wh-a", "j2", "habitat"],
   2: ["base", "j1", "j2", "wh-b", "j2", "habitat"],
   3: ["base", "j1", "wh-c", "j1", "j2", "habitat"],
-  4: ["base", "j1", "j2", "wh-a", "j2", "wh-b", "habitat"],
+  4: ["base", "j1", "j2", "wh-a", "j2", "wh-b", "j2", "habitat"],
   5: ["habitat", "j2", "j1", "base"],
 };
 
@@ -85,7 +93,7 @@ const waypointAliases = {
 };
 
 const waypointLogMessages = {
-  base: "Rover departed Base",
+  base: "Reached Base",
   j1: "Reached J1",
   j2: "Reached J2",
   "wh-a": "Reached WH-A",
@@ -95,6 +103,7 @@ const waypointLogMessages = {
 };
 
 const missionSegmentDurationMs = 1800;
+const waypointPauseDurationMs = 300;
 const aiPromptExamples = [
   "Habitat is low on oxygen",
   "Astronaut needs medicine",
@@ -144,6 +153,42 @@ function getRoutePointsForWaypointPath(path, segmentLimit = path.length - 1) {
 
 function getRouteDForWaypointPath(path, segmentLimit = path.length - 1) {
   return getPathD(getRoutePointsForWaypointPath(path, segmentLimit));
+}
+
+function getMissionPath(missionId) {
+  return missionPaths[missionId] ?? ["base"];
+}
+
+function getPathBetweenLocations(from, to) {
+  if (!validRoadGraph[from] || !validRoadGraph[to]) {
+    return [];
+  }
+
+  if (from === to) {
+    return [from];
+  }
+
+  const queue = [[from]];
+  const visited = new Set([from]);
+
+  while (queue.length > 0) {
+    const path = queue.shift();
+    const current = path[path.length - 1];
+
+    for (const next of validRoadGraph[current] ?? []) {
+      if (visited.has(next)) continue;
+
+      const nextPath = [...path, next];
+      if (next === to) {
+        return nextPath;
+      }
+
+      visited.add(next);
+      queue.push(nextPath);
+    }
+  }
+
+  return [];
 }
 
 function formatStatusValue(value, fallback = "Unknown") {
@@ -466,9 +511,148 @@ function App() {
   }, []);
 
   const clearAnimationTimers = useCallback(() => {
-    animationTimers.current.forEach((timer) => window.clearTimeout(timer));
+    animationTimers.current.forEach((timer) => {
+      window.clearTimeout(timer);
+      window.cancelAnimationFrame(timer);
+    });
     animationTimers.current = [];
   }, []);
+
+  const scheduleAnimationTimer = useCallback((callback, delay) => {
+    const timer = window.setTimeout(callback, delay);
+    animationTimers.current.push(timer);
+    return timer;
+  }, []);
+
+  const markSegmentComplete = useCallback((segmentNumber) => {
+    setAnimationState((current) => ({
+      ...current,
+      completedSegments: Array.from({ length: segmentNumber }, (_, segmentIndex) => segmentIndex),
+    }));
+  }, []);
+
+  const animatePositionBetweenPoints = useCallback((fromPoint, toPoint, durationMs, onComplete) => {
+    const startedAt = performance.now();
+    let frameId = 0;
+
+    const step = (now) => {
+      const progress = Math.min(1, (now - startedAt) / durationMs);
+      const easedProgress = progress < 0.5
+        ? 2 * progress * progress
+        : 1 - ((-2 * progress + 2) ** 2) / 2;
+
+      setAnimationState((current) => ({
+        ...current,
+        position: {
+          x: fromPoint.x + ((toPoint.x - fromPoint.x) * easedProgress),
+          y: fromPoint.y + ((toPoint.y - fromPoint.y) * easedProgress),
+        },
+      }));
+
+      if (progress < 1) {
+        frameId = window.requestAnimationFrame(step);
+        animationTimers.current.push(frameId);
+        return;
+      }
+
+      onComplete?.();
+    };
+
+    frameId = window.requestAnimationFrame(step);
+    animationTimers.current.push(frameId);
+  }, []);
+
+  const animateRouteSegment = useCallback((fromWaypoint, toWaypoint, onComplete) => {
+    const routePoints = getRoutePointsForWaypointPath([fromWaypoint, toWaypoint]);
+    if (routePoints.length < 2) {
+      onComplete?.();
+      return;
+    }
+
+    const pathPoints = routePoints.map(resolveRoutePoint);
+    const durationPerSubSegment = Math.max(260, Math.round(missionSegmentDurationMs / (pathPoints.length - 1)));
+
+    const animateSubSegment = (pointIndex) => {
+      if (pointIndex >= pathPoints.length - 1) {
+        onComplete?.();
+        return;
+      }
+
+      animatePositionBetweenPoints(
+        pathPoints[pointIndex],
+        pathPoints[pointIndex + 1],
+        durationPerSubSegment,
+        () => animateSubSegment(pointIndex + 1),
+      );
+    };
+
+    animateSubSegment(0);
+  }, [animatePositionBetweenPoints]);
+
+  const animateAlongPath = useCallback((path, details, options = {}) => {
+    const totalSegments = path.length - 1;
+    if (totalSegments <= 0) {
+      return;
+    }
+
+    const completeMission = options.completeMission ?? true;
+
+    const animateSegment = (segmentIndex) => {
+      if (segmentIndex >= totalSegments) {
+        if (completeMission) {
+          addEvent("MISSION", "Mission Complete", "success");
+          setMissionState("complete");
+        }
+        return;
+      }
+
+      const fromWaypoint = path[segmentIndex];
+      const toWaypoint = path[segmentIndex + 1];
+      const nextWaypoint = path[segmentIndex + 2] ?? null;
+      const segmentNumber = segmentIndex + 1;
+
+      setAnimationState((current) => ({
+        ...current,
+        isMoving: true,
+        nextWaypoint: toWaypoint,
+      }));
+
+      animateRouteSegment(fromWaypoint, toWaypoint, () => {
+        const reachedPickup = details?.pickup === toWaypoint;
+        const reachedHabitat = toWaypoint === "habitat";
+        const reachedEnd = segmentNumber === totalSegments;
+
+        setAnimationState((current) => ({
+          ...current,
+          cargoLoaded: reachedHabitat
+            ? false
+            : current.cargoLoaded || Boolean(reachedPickup && details?.cargo !== "None"),
+          currentWaypoint: toWaypoint,
+          etaSeconds: Math.max(0, Math.ceil(((totalSegments - segmentNumber) * (missionSegmentDurationMs + waypointPauseDurationMs)) / 1000)),
+          habitatDelivered: current.habitatDelivered || Boolean(reachedHabitat && details?.cargo !== "None"),
+          isMoving: !reachedEnd,
+          nextWaypoint,
+          position: mapWaypoints[toWaypoint],
+        }));
+
+        markSegmentComplete(segmentNumber);
+
+        if (waypointLogMessages[toWaypoint]) {
+          addEvent("ROVER", waypointLogMessages[toWaypoint], toWaypoint === "habitat" ? "success" : "info");
+        }
+        if (reachedPickup && details?.cargo !== "None") {
+          addEvent("CARGO", "Cargo Loaded", "success");
+        }
+        if (reachedHabitat && details?.cargo !== "None") {
+          addEvent("CARGO", "Cargo Delivered", "success");
+        }
+
+        scheduleAnimationTimer(() => animateSegment(segmentIndex + 1), waypointPauseDurationMs);
+      });
+    };
+
+    animateSegment(0);
+  }, [addEvent, animateRouteSegment, markSegmentComplete, scheduleAnimationTimer]);
 
   const syncAnimationFromRoverStatus = useCallback((status) => {
     const waypointKey = toWaypointKey(status?.location);
@@ -476,12 +660,11 @@ function App() {
 
     setAnimationState((current) => {
       const waypoint = mapWaypoints[waypointKey];
-      const currentIndex = current.path.indexOf(waypointKey);
       const idle = String(status?.state ?? "").toUpperCase() === "IDLE";
       const noMission = ["", "none", "NONE"].includes(String(status?.mission ?? "").trim());
-      const completedSegmentCount = Array.isArray(current.completedSegments)
-        ? current.completedSegments.length
-        : Number(current.completedSegments) || 0;
+      const lastValidWaypoint = mapWaypoints[current.currentWaypoint]
+        ? current.currentWaypoint
+        : "base";
 
       // Firmware v0.9 reports coarse simulated locations while a mission is
       // running, often keeping location at "base" until completion. Trust the
@@ -491,14 +674,17 @@ function App() {
         return current;
       }
 
+      const correctionPath = getPathBetweenLocations(lastValidWaypoint, waypointKey);
+      const safePath = correctionPath.length > 0 ? correctionPath : [waypointKey];
+      const completedSegmentCount = Math.max(0, safePath.length - 1);
+
       return {
         ...current,
-        completedSegments: currentIndex >= 0
-          ? Array.from({ length: Math.max(completedSegmentCount, currentIndex) }, (_, index) => index)
-          : current.completedSegments,
+        completedSegments: Array.from({ length: completedSegmentCount }, (_, index) => index),
         currentWaypoint: waypointKey,
         isMoving: idle && noMission ? false : current.isMoving,
         nextWaypoint: idle && noMission ? null : current.nextWaypoint,
+        path: safePath,
         position: waypoint,
       };
     });
@@ -507,7 +693,7 @@ function App() {
   const startMissionAnimation = useCallback((mission) => {
     clearAnimationTimers();
 
-    const path = missionPaths[mission.id];
+    const path = getMissionPath(mission.id);
     const details = missionDetails[mission.id];
     const totalSegments = path.length - 1;
     const startWaypoint = path[0];
@@ -516,55 +702,20 @@ function App() {
       cargoLoaded: false,
       completedSegments: [],
       currentWaypoint: startWaypoint,
-      etaSeconds: Math.ceil((totalSegments * missionSegmentDurationMs) / 1000),
+      etaSeconds: Math.ceil((totalSegments * (missionSegmentDurationMs + waypointPauseDurationMs)) / 1000),
       habitatDelivered: false,
       isMoving: true,
       nextWaypoint: path[1] ?? null,
       path,
       position: mapWaypoints[startWaypoint],
     });
-    addEvent("ROVER", mission.id === 5 ? "Rover departed Habitat" : "Rover departed Base", "info");
 
-    path.slice(1).forEach((waypointKey, index) => {
-      const segmentNumber = index + 1;
-      const timer = window.setTimeout(() => {
-        const nextWaypoint = path[segmentNumber + 1] ?? null;
-        const reachedPickup = details.pickup === waypointKey;
-        const reachedHabitat = waypointKey === "habitat";
-        const reachedEnd = segmentNumber === totalSegments;
+    if (waypointLogMessages[startWaypoint]) {
+      addEvent("ROVER", waypointLogMessages[startWaypoint], "info");
+    }
 
-        setAnimationState((current) => ({
-          ...current,
-          cargoLoaded: reachedHabitat
-            ? false
-            : current.cargoLoaded || Boolean(reachedPickup && details.cargo !== "None"),
-          completedSegments: Array.from({ length: segmentNumber }, (_, segmentIndex) => segmentIndex),
-          currentWaypoint: waypointKey,
-          etaSeconds: Math.max(0, Math.ceil(((totalSegments - segmentNumber) * missionSegmentDurationMs) / 1000)),
-          habitatDelivered: current.habitatDelivered || Boolean(reachedHabitat && details.cargo !== "None"),
-          isMoving: !reachedEnd,
-          nextWaypoint,
-          position: mapWaypoints[waypointKey],
-        }));
-
-        if (waypointLogMessages[waypointKey]) {
-          addEvent("ROVER", waypointLogMessages[waypointKey], waypointKey === "habitat" ? "success" : "info");
-        }
-        if (reachedPickup && details.cargo !== "None") {
-          addEvent("CARGO", "Cargo Loaded", "success");
-        }
-        if (reachedHabitat && details.cargo !== "None") {
-          addEvent("CARGO", "Cargo Delivered", "success");
-        }
-        if (reachedEnd) {
-          addEvent("MISSION", "Mission Complete", "success");
-          setMissionState("complete");
-        }
-      }, missionSegmentDurationMs * segmentNumber);
-
-      animationTimers.current.push(timer);
-    });
-  }, [addEvent, clearAnimationTimers]);
+    animateAlongPath(path, details);
+  }, [addEvent, animateAlongPath, clearAnimationTimers]);
 
   const refreshPorts = useCallback(async () => {
     if (!ENABLE_SERIAL) {
