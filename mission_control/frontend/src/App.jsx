@@ -68,12 +68,12 @@ const validRoadGraph = {
   habitat: ["j2"],
 };
 
-const missionPaths = {
-  1: ["base", "j1", "j2", "wh-a", "j2", "habitat"],
-  2: ["base", "j1", "j2", "wh-b", "j2", "habitat"],
-  3: ["base", "j1", "wh-c", "j1", "j2", "habitat"],
-  4: ["base", "j1", "j2", "wh-a", "j2", "wh-b", "j2", "habitat"],
-  5: ["habitat", "j2", "j1", "base"],
+const missionStops = {
+  1: ["wh-a", "habitat"],
+  2: ["wh-b", "habitat"],
+  3: ["wh-c", "habitat"],
+  4: ["wh-a", "wh-b", "habitat"],
+  5: ["base"],
 };
 
 const waypointAliases = {
@@ -155,10 +155,6 @@ function getRouteDForWaypointPath(path, segmentLimit = path.length - 1) {
   return getPathD(getRoutePointsForWaypointPath(path, segmentLimit));
 }
 
-function getMissionPath(missionId) {
-  return missionPaths[missionId] ?? ["base"];
-}
-
 function getPathBetweenLocations(from, to) {
   if (!validRoadGraph[from] || !validRoadGraph[to]) {
     return [];
@@ -189,6 +185,22 @@ function getPathBetweenLocations(from, to) {
   }
 
   return [];
+}
+
+function buildMissionPath(currentLocation, missionId) {
+  const startLocation = validRoadGraph[currentLocation] ? currentLocation : "base";
+  const stops = missionStops[missionId] ?? [];
+
+  return stops.reduce((path, stop) => {
+    const from = path[path.length - 1];
+    const segmentPath = getPathBetweenLocations(from, stop);
+
+    if (segmentPath.length <= 1) {
+      return path;
+    }
+
+    return [...path, ...segmentPath.slice(1)];
+  }, [startLocation]);
 }
 
 function formatStatusValue(value, fallback = "Unknown") {
@@ -482,6 +494,7 @@ function App() {
   const [aiPrompt, setAiPrompt] = useState("");
   const [aiPlanning, setAiPlanning] = useState(false);
   const [aiPlan, setAiPlan] = useState(null);
+  const [currentRoverLocation, setCurrentRoverLocation] = useState("base");
   const [animationState, setAnimationState] = useState({
     cargoLoaded: false,
     completedSegments: [],
@@ -494,6 +507,11 @@ function App() {
     position: mapWaypoints.base,
   });
   const animationTimers = useRef([]);
+  const animationStateRef = useRef(animationState);
+
+  useEffect(() => {
+    animationStateRef.current = animationState;
+  }, [animationState]);
 
   const addEvent = useCallback((source, message, level = "info") => {
     setEvents((current) =>
@@ -634,6 +652,7 @@ function App() {
           nextWaypoint,
           position: mapWaypoints[toWaypoint],
         }));
+        setCurrentRoverLocation(toWaypoint);
 
         markSegmentComplete(segmentNumber);
 
@@ -658,6 +677,12 @@ function App() {
     const waypointKey = toWaypointKey(status?.location);
     if (!waypointKey) return;
 
+    if (animationStateRef.current.isMoving) {
+      return;
+    }
+
+    setCurrentRoverLocation(waypointKey);
+
     setAnimationState((current) => {
       const waypoint = mapWaypoints[waypointKey];
       const idle = String(status?.state ?? "").toUpperCase() === "IDLE";
@@ -670,7 +695,7 @@ function App() {
       // running, often keeping location at "base" until completion. Trust the
       // local waypoint animation while it is moving, then accept MQTT location
       // corrections once the rover reports IDLE/no mission.
-      if (current.isMoving && !(idle && noMission)) {
+      if (current.isMoving) {
         return current;
       }
 
@@ -693,10 +718,11 @@ function App() {
   const startMissionAnimation = useCallback((mission) => {
     clearAnimationTimers();
 
-    const path = getMissionPath(mission.id);
+    const path = buildMissionPath(currentRoverLocation, mission.id);
     const details = missionDetails[mission.id];
     const totalSegments = path.length - 1;
     const startWaypoint = path[0];
+    const startLabel = mapWaypoints[startWaypoint]?.label ?? "Unknown";
 
     setAnimationState({
       cargoLoaded: false,
@@ -704,18 +730,23 @@ function App() {
       currentWaypoint: startWaypoint,
       etaSeconds: Math.ceil((totalSegments * (missionSegmentDurationMs + waypointPauseDurationMs)) / 1000),
       habitatDelivered: false,
-      isMoving: true,
+      isMoving: totalSegments > 0,
       nextWaypoint: path[1] ?? null,
       path,
       position: mapWaypoints[startWaypoint],
     });
+    setCurrentRoverLocation(startWaypoint);
 
-    if (waypointLogMessages[startWaypoint]) {
-      addEvent("ROVER", waypointLogMessages[startWaypoint], "info");
+    addEvent("MISSION", `Mission started from ${startLabel}`, "info");
+
+    if (totalSegments <= 0) {
+      addEvent("MISSION", "Mission Complete", "success");
+      setMissionState("complete");
+      return;
     }
 
     animateAlongPath(path, details);
-  }, [addEvent, animateAlongPath, clearAnimationTimers]);
+  }, [addEvent, animateAlongPath, clearAnimationTimers, currentRoverLocation]);
 
   const refreshPorts = useCallback(async () => {
     if (!ENABLE_SERIAL) {
