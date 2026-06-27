@@ -43,6 +43,13 @@ MISSION_COMMANDS = {
 VOICE_INTENTS = (
     ("oxygen", "deliver_oxygen", 3, "Deliver Oxygen to Habitat"),
     ("medicine", "deliver_medicine", 2, "Deliver Medicine to Habitat"),
+    ("medical", "deliver_medicine", 2, "Deliver Medicine to Habitat"),
+    ("medication", "deliver_medicine", 2, "Deliver Medicine to Habitat"),
+    ("doctor", "deliver_medicine", 2, "Deliver Medicine to Habitat"),
+    ("sick", "deliver_medicine", 2, "Deliver Medicine to Habitat"),
+    ("unwell", "deliver_medicine", 2, "Deliver Medicine to Habitat"),
+    ("not feeling well", "deliver_medicine", 2, "Deliver Medicine to Habitat"),
+    ("first aid", "deliver_medicine", 2, "Deliver Medicine to Habitat"),
     ("food", "deliver_food", 1, "Deliver Food to Habitat"),
     ("research", "collect_research_sample", 4, "Collect Research Sample"),
     ("sample", "collect_research_sample", 4, "Collect Research Sample"),
@@ -213,13 +220,45 @@ def validate_ai_plan(plan: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def bedrock_inference_profile_prefix(region: str) -> str:
+    """Choose the Bedrock cross-region inference profile prefix for a region."""
+
+    normalized_region = region.strip().lower()
+    if normalized_region.startswith("eu-"):
+        return "eu"
+    if normalized_region.startswith("ap-"):
+        return "apac"
+    return "us"
+
+
+def normalize_bedrock_model_id(model_id: str, region: str) -> str:
+    """Normalize direct Bedrock model IDs to inference-profile IDs when needed."""
+
+    clean_model_id = model_id.strip()
+    inference_profile_prefixes = ("us.", "eu.", "apac.", "global.")
+    if clean_model_id.startswith(inference_profile_prefixes):
+        return clean_model_id
+
+    if clean_model_id.startswith("anthropic.claude-haiku-4-5-"):
+        profile_prefix = bedrock_inference_profile_prefix(region)
+        normalized_model_id = f"{profile_prefix}.{clean_model_id}"
+        logger.info(
+            "Normalizing Bedrock model ID to inference profile: %s",
+            normalized_model_id,
+        )
+        return normalized_model_id
+
+    return clean_model_id
+
+
 def plan_with_bedrock(text: str) -> dict[str, Any]:
     """Use Amazon Bedrock to classify a natural-language mission request."""
 
     import boto3
 
     region = os.getenv("AWS_REGION", "us-east-1")
-    model_id = os.getenv("BEDROCK_MODEL_ID", DEFAULT_BEDROCK_MODEL_ID)
+    configured_model_id = os.getenv("BEDROCK_MODEL_ID", DEFAULT_BEDROCK_MODEL_ID)
+    model_id = normalize_bedrock_model_id(configured_model_id, region)
     client = boto3.client("bedrock-runtime", region_name=region)
 
     prompt = f"""
