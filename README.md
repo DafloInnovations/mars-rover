@@ -89,6 +89,9 @@ Commands are newline-delimited and accepted at 115200 baud:
 | `STOP` | Stop both motors |
 | `TEST` | Run the legacy v0.2 movement sequence once |
 | `LINE_TEST` | Print left, center, and right line channels every 300 ms for 20 seconds |
+| `LINE_FOLLOW_START` | Enable continuous autonomous 3-channel line following |
+| `LINE_FOLLOW_STOP` | Disable autonomous line following and stop the motors |
+| `LINE_FOLLOW_TEST` | Run autonomous line following for 20 seconds, then stop |
 | `RFID_TEST` | Scan for RC522 cards and print detected UIDs for 20 seconds |
 | `SERVO_OPEN` | Move the SG90 cargo servo to 90 degrees |
 | `SERVO_CLOSE` | Move the SG90 cargo servo to 0 degrees |
@@ -255,16 +258,15 @@ serial remains available as a development fallback and for direct diagnostics.
 
 ## Three-channel line sensor wiring
 
-Connect the left, center, and right digital line-sensor outputs to the ESP32 as
-follows:
+Connect the BFD-1000 middle three digital outputs to the ESP32 as follows:
 
-| Line sensor signal | ESP32 GPIO |
-|---|---:|
-| Left | 32 |
-| Center | 33 |
-| Right | 21 |
-| GND | GND |
-| VCC | Module-compatible supply |
+| BFD-1000 signal | Firmware role | ESP32 GPIO |
+|---|---|---:|
+| S2 | Left | 32 |
+| S3 | Center | 33 |
+| S4 | Right | 21 |
+| GND | GND | GND |
+| VCC | VCC | Module-compatible supply |
 
 The firmware uses plain `INPUT` mode and expects the line sensor module to
 drive each digital channel.
@@ -274,6 +276,29 @@ with the actual module before autonomous line-following work; if its comparator
 polarity is reversed, change `kLineSensorBlackState` in `firmware/main.cpp` to
 `LOW`. `LineSensor::isJunction()` returns true only when all three channels
 equal the configured black state.
+
+## Autonomous line-following commands
+
+The line follower samples the left, center, and right digital channels every
+40 milliseconds without blocking MQTT or serial command handling.
+
+| Reading | Meaning | Motor action | Serial log on state change |
+|---|---|---|---|
+| `L=0,C=1,R=0` | Line centered | Forward | `LINE:FOLLOWING_CENTER` |
+| `L=1,C=1,R=0` or `L=1,C=0,R=0` | Line is left | Correct left | `LINE:CORRECT_LEFT` |
+| `L=0,C=1,R=1` or `L=0,C=0,R=1` | Line is right | Correct right | `LINE:CORRECT_RIGHT` |
+| `L=1,C=1,R=1` | Junction | Stop briefly for 300 ms | `LINE:JUNCTION` |
+| `L=0,C=0,R=0` | Line lost | Stop | `LINE:LOST` |
+
+`LINE_FOLLOW_START` keeps autonomous following enabled until
+`LINE_FOLLOW_STOP`, `STOP`, a manual motor command, diagnostics, or a mission
+takes control. `LINE_FOLLOW_TEST` runs the same follower for 20 seconds and
+then stops automatically.
+
+MQTT status includes:
+
+- `line_follow`: `enabled` or `disabled`
+- `line_state`: `CENTER`, `LEFT`, `RIGHT`, `JUNCTION`, or `LOST`
 
 ## LINE_TEST usage
 

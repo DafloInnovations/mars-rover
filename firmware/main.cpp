@@ -43,6 +43,9 @@ constexpr unsigned long kStandardStopDurationMs = 1000;
 constexpr unsigned long kFinalStopDurationMs = 2000;
 constexpr unsigned long kLineTestDurationMs = 20000;
 constexpr unsigned long kLineSampleIntervalMs = 300;
+constexpr unsigned long kLineFollowIntervalMs = 40;
+constexpr unsigned long kLineFollowJunctionPauseMs = 300;
+constexpr unsigned long kLineFollowTestDurationMs = 20000;
 constexpr unsigned long kRfidTestDurationMs = 20000;
 constexpr unsigned long kSelfTestRfidDurationMs = 5000;
 constexpr unsigned long kRfidScanIntervalMs = 50;
@@ -50,6 +53,21 @@ constexpr unsigned long kSelfTestMovementDurationMs = 1000;
 constexpr unsigned long kStatusPublishIntervalMs = 2000;
 constexpr size_t kCommandBufferSize = 32;
 constexpr size_t kMqttCommandBufferSize = 64;
+
+enum LastLineDirection {
+  LINE_DIR_CENTER,
+  LINE_DIR_LEFT,
+  LINE_DIR_RIGHT,
+};
+
+enum LineFollowState {
+  LINE_STATE_UNKNOWN,
+  LINE_STATE_CENTER,
+  LINE_STATE_LEFT,
+  LINE_STATE_RIGHT,
+  LINE_STATE_JUNCTION,
+  LINE_STATE_LOST,
+};
 
 MotorController motorController(kIn1Pin, kIn2Pin, kIn3Pin, kIn4Pin);
 LineSensor lineSensor(kLineSensorLeftPin,
@@ -85,6 +103,13 @@ char roverState[18] = "IDLE";
 char roverLocation[12] = "base";
 char lastRfidUid[24] = "NONE";
 char servoState[8] = "CLOSED";
+bool lineFollowEnabled = false;
+bool lineFollowTestActive = false;
+unsigned long lineFollowTestStartedAt = 0;
+unsigned long lastLineFollowUpdateMs = 0;
+unsigned long lineFollowPausedUntilMs = 0;
+LastLineDirection lastLineDirection = LINE_DIR_CENTER;
+LineFollowState currentLineFollowState = LINE_STATE_UNKNOWN;
 
 void publishRoverStatus();
 
@@ -163,6 +188,197 @@ void publishBirthMessage() {
 }
 
 /**
+ * @brief Converts the line-follow state enum into the MQTT status value.
+ */
+const char* lineFollowStateName(const LineFollowState state) {
+  switch (state) {
+    case LINE_STATE_CENTER:
+      return "CENTER";
+    case LINE_STATE_LEFT:
+      return "LEFT";
+    case LINE_STATE_RIGHT:
+      return "RIGHT";
+    case LINE_STATE_JUNCTION:
+      return "JUNCTION";
+    case LINE_STATE_LOST:
+      return "LOST";
+    case LINE_STATE_UNKNOWN:
+    default:
+      return "CENTER";
+  }
+}
+
+/**
+ * @brief Converts the line-follow state into the legacy line status field.
+ */
+const char* lineStatusName(const LineFollowState state) {
+  switch (state) {
+    case LINE_STATE_JUNCTION:
+      return "AT_JUNCTION";
+    case LINE_STATE_LOST:
+      return "LOST";
+    case LINE_STATE_CENTER:
+    case LINE_STATE_LEFT:
+    case LINE_STATE_RIGHT:
+      return "ON_TRACK";
+    case LINE_STATE_UNKNOWN:
+    default:
+      return lineSensor.isInitialized() && lineSensor.isJunction()
+                 ? "AT_JUNCTION"
+                 : "UNKNOWN";
+  }
+}
+
+/**
+ * @brief Emits one line-follow transition log without spamming repeated states.
+ */
+void logLineFollowState(const LineFollowState state) {
+  if (currentLineFollowState == state) {
+    return;
+  }
+
+  currentLineFollowState = state;
+
+  switch (state) {
+    case LINE_STATE_CENTER:
+      Serial.println("LINE:FOLLOWING_CENTER");
+      publishLog("LINE:FOLLOWING_CENTER");
+      break;
+    case LINE_STATE_LEFT:
+      Serial.println("LINE:CORRECT_LEFT");
+      publishLog("LINE:CORRECT_LEFT");
+      break;
+    case LINE_STATE_RIGHT:
+      Serial.println("LINE:CORRECT_RIGHT");
+      publishLog("LINE:CORRECT_RIGHT");
+      break;
+    case LINE_STATE_JUNCTION:
+      Serial.println("LINE:JUNCTION");
+      publishLog("LINE:JUNCTION");
+      publishRoverStatus();
+      break;
+    case LINE_STATE_LOST:
+      Serial.println("LINE:LOST");
+      publishLog("LINE:LOST");
+      publishRoverStatus();
+      break;
+    case LINE_STATE_UNKNOWN:
+    default:
+      break;
+  }
+}
+
+/**
+ * @brief Stops and disables autonomous line following.
+ */
+void disableLineFollowing(const bool stopMotors) {
+  lineFollowEnabled = false;
+  lineFollowTestActive = false;
+  lineFollowPausedUntilMs = 0;
+
+  if (stopMotors) {
+    motorController.stop();
+    setRoverState("IDLE");
+  }
+}
+
+/**
+ * @brief Enables continuous autonomous line following.
+ */
+void startLineFollowing() {
+  lineFollowEnabled = true;
+  lineFollowTestActive = false;
+  lineFollowTestStartedAt = 0;
+  lastLineFollowUpdateMs = 0;
+  lineFollowPausedUntilMs = 0;
+  currentLineFollowState = LINE_STATE_UNKNOWN;
+  lastLineDirection = LINE_DIR_CENTER;
+  setRoverState("MOVING");
+  Serial.println("ACK:LINE_FOLLOW_START");
+  publishLog("LINE_FOLLOW_STARTED");
+}
+
+/**
+ * @brief Enables line following for a fixed test duration.
+ */
+void startLineFollowTest() {
+  lineFollowEnabled = true;
+  lineFollowTestActive = true;
+  lineFollowTestStartedAt = millis();
+  lastLineFollowUpdateMs = 0;
+  lineFollowPausedUntilMs = 0;
+  currentLineFollowState = LINE_STATE_UNKNOWN;
+  lastLineDirection = LINE_DIR_CENTER;
+  setRoverState("MOVING");
+  Serial.println("LINE_FOLLOW_TEST_START");
+  publishLog("LINE_FOLLOW_TEST_START");
+}
+
+/**
+ * @brief Runs one non-blocking line-following control step when scheduled.
+ */
+void updateLineFollower() {
+  if (!lineFollowEnabled) {
+    return;
+  }
+
+  const unsigned long now = millis();
+
+  if (lineFollowTestActive &&
+      now - lineFollowTestStartedAt >= kLineFollowTestDurationMs) {
+    disableLineFollowing(true);
+    Serial.println("LINE_FOLLOW_TEST_COMPLETE");
+    publishLog("LINE_FOLLOW_TEST_COMPLETE");
+    publishRoverStatus();
+    return;
+  }
+
+  if (lineFollowPausedUntilMs != 0 && now < lineFollowPausedUntilMs) {
+    motorController.stop();
+    return;
+  }
+  lineFollowPausedUntilMs = 0;
+
+  if (now - lastLineFollowUpdateMs < kLineFollowIntervalMs) {
+    return;
+  }
+  lastLineFollowUpdateMs = now;
+
+  const LineSensorReadings readings = lineSensor.read();
+  const bool leftDetected = readings.left == 1;
+  const bool centerDetected = readings.center == 1;
+  const bool rightDetected = readings.right == 1;
+
+  if (!leftDetected && centerDetected && !rightDetected) {
+    logLineFollowState(LINE_STATE_CENTER);
+    lastLineDirection = LINE_DIR_CENTER;
+    setRoverState("MOVING");
+    motorController.forward();
+  } else if ((leftDetected && centerDetected && !rightDetected) ||
+             (leftDetected && !centerDetected && !rightDetected)) {
+    logLineFollowState(LINE_STATE_LEFT);
+    lastLineDirection = LINE_DIR_LEFT;
+    setRoverState("MOVING");
+    motorController.left();
+  } else if ((!leftDetected && centerDetected && rightDetected) ||
+             (!leftDetected && !centerDetected && rightDetected)) {
+    logLineFollowState(LINE_STATE_RIGHT);
+    lastLineDirection = LINE_DIR_RIGHT;
+    setRoverState("MOVING");
+    motorController.right();
+  } else if (leftDetected && centerDetected && rightDetected) {
+    logLineFollowState(LINE_STATE_JUNCTION);
+    motorController.stop();
+    setRoverState("IDLE");
+    lineFollowPausedUntilMs = now + kLineFollowJunctionPauseMs;
+  } else {
+    logLineFollowState(LINE_STATE_LOST);
+    motorController.stop();
+    setRoverState("IDLE");
+  }
+}
+
+/**
  * @brief Normalizes command text to the uppercase firmware protocol format.
  *
  * @param source Raw source text.
@@ -208,6 +424,9 @@ bool isSupportedCommand(const char* command) {
          strcmp(command, "STOP") == 0 ||
          strcmp(command, "TEST") == 0 ||
          strcmp(command, "LINE_TEST") == 0 ||
+         strcmp(command, "LINE_FOLLOW_START") == 0 ||
+         strcmp(command, "LINE_FOLLOW_STOP") == 0 ||
+         strcmp(command, "LINE_FOLLOW_TEST") == 0 ||
          strcmp(command, "RFID_TEST") == 0 ||
          strcmp(command, "SERVO_OPEN") == 0 ||
          strcmp(command, "SERVO_CLOSE") == 0 ||
@@ -239,6 +458,7 @@ void stopFor(const unsigned long durationMs) {
  * rover remains stopped after the sequence completes.
  */
 void runMotorTest() {
+  disableLineFollowing(true);
   Serial.println("TEST:FORWARD");
   setRoverState("MOVING");
   motorController.forward();
@@ -274,6 +494,7 @@ void runMotorTest() {
  * @param command Mission command from MISSION_1 through MISSION_5.
  */
 void runMission(const char* command) {
+  disableLineFollowing(true);
   setCurrentMission(command);
   setRoverState("MISSION_RUNNING");
   publishRoverStatus();
@@ -328,6 +549,7 @@ void runMission(const char* command) {
  * serial printing does not accumulate drift between samples.
  */
 void runLineTest() {
+  disableLineFollowing(true);
   motorController.stop();
   const unsigned long startTime = millis();
   unsigned long nextSampleOffsetMs = 0;
@@ -355,6 +577,7 @@ void runLineTest() {
  * once using its hexadecimal UID; no RFID value affects mission behavior.
  */
 void runRfidTest() {
+  disableLineFollowing(true);
   motorController.stop();
   const unsigned long startTime = millis();
 
@@ -376,6 +599,7 @@ void runRfidTest() {
  * can still be exercised. Motor commands always finish in a stopped state.
  */
 void runSelfTest() {
+  disableLineFollowing(true);
   Serial.println("SELF_TEST_START");
 
   if (!motorController.isInitialized()) {
@@ -435,25 +659,40 @@ void runSelfTest() {
  */
 void executeCommand(const char* command) {
   if (strcmp(command, "FORWARD") == 0) {
+    disableLineFollowing(false);
     setRoverState("MOVING");
     motorController.forward();
   } else if (strcmp(command, "BACKWARD") == 0) {
+    disableLineFollowing(false);
     setRoverState("MOVING");
     motorController.backward();
   } else if (strcmp(command, "LEFT") == 0) {
+    disableLineFollowing(false);
     setRoverState("MOVING");
     motorController.left();
   } else if (strcmp(command, "RIGHT") == 0) {
+    disableLineFollowing(false);
     setRoverState("MOVING");
     motorController.right();
   } else if (strcmp(command, "STOP") == 0) {
-    motorController.stop();
-    setRoverState("IDLE");
+    disableLineFollowing(true);
   } else if (strcmp(command, "TEST") == 0) {
     runMotorTest();
   } else if (strcmp(command, "LINE_TEST") == 0) {
     Serial.println("ACK:LINE_TEST");
     runLineTest();
+    return;
+  } else if (strcmp(command, "LINE_FOLLOW_START") == 0) {
+    startLineFollowing();
+    return;
+  } else if (strcmp(command, "LINE_FOLLOW_STOP") == 0) {
+    disableLineFollowing(true);
+    Serial.println("ACK:LINE_FOLLOW_STOP");
+    publishLog("LINE_FOLLOW_STOPPED");
+    publishRoverStatus();
+    return;
+  } else if (strcmp(command, "LINE_FOLLOW_TEST") == 0) {
+    startLineFollowTest();
     return;
   } else if (strcmp(command, "RFID_TEST") == 0) {
     Serial.println("ACK:RFID_TEST");
@@ -594,20 +833,20 @@ void processMqttCommand() {
  * @brief Publishes the current rover status JSON every two seconds.
  */
 void publishRoverStatus() {
-  const char* lineState = "UNKNOWN";
-  if (lineSensor.isInitialized()) {
-    lineState = lineSensor.isJunction() ? "AT_JUNCTION" : "ON_TRACK";
-  }
+  const char* lineState = lineStatusName(currentLineFollowState);
+  const char* lineFollowState = lineFollowStateName(currentLineFollowState);
+  const char* lineFollowMode = lineFollowEnabled ? "enabled" : "disabled";
 
   const long wifiRssi = mqttManager.isWifiConnected() ? WiFi.RSSI() : 0;
   const unsigned long uptimeSeconds = millis() / 1000;
 
-  char statusPayload[384] = {};
+  char statusPayload[448] = {};
   snprintf(statusPayload,
            sizeof(statusPayload),
            "{\"rover_id\":\"%s\",\"firmware\":\"v0.9\",\"mission\":\"%s\","
            "\"state\":\"%s\",\"location\":\"%s\",\"battery\":87,"
            "\"wifi_rssi\":%ld,\"uptime\":%lu,\"line\":\"%s\","
+           "\"line_follow\":\"%s\",\"line_state\":\"%s\","
            "\"rfid\":\"%s\",\"servo\":\"%s\",\"timestamp\":%lu}",
            ROVER_ID,
            currentMission,
@@ -616,6 +855,8 @@ void publishRoverStatus() {
            wifiRssi,
            uptimeSeconds,
            lineState,
+           lineFollowMode,
+           lineFollowState,
            lastRfidUid,
            servoState,
            uptimeSeconds);
@@ -645,13 +886,13 @@ void processNetwork() {
   const bool mqttConnected = mqttManager.isMqttConnected();
 
   if (wasWifiConnected && !wifiConnected) {
-    motorController.stop();
+    disableLineFollowing(true);
     setRoverState("ERROR");
     Serial.println("ERR:WIFI_DISCONNECTED");
   }
 
   if (wasMqttConnected && !mqttConnected) {
-    motorController.stop();
+    disableLineFollowing(true);
     setRoverState("ERROR");
     Serial.println("ERR:MQTT_DISCONNECTED");
   }
@@ -750,4 +991,5 @@ void loop() {
   processNetwork();
   processSerialInput();
   processMqttCommand();
+  updateLineFollower();
 }
