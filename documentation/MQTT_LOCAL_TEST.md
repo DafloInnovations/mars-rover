@@ -30,7 +30,7 @@ mars/supar1/mission
 mars/supar1/command
 mars/supar1/status
 mars/supar1/telemetry
-mars/supar1/log
+mars/supar1/log . . 
 ```
 
 Expected broker behavior:
