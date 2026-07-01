@@ -11,6 +11,26 @@ Su-Par1 currently uses a straight-line checkpoint layout:
 BASE → FOOD → MEDICINE → OXYGEN → HABITAT
 ```
 
+Checkpoint order is fixed:
+
+| Checkpoint | Index |
+|---|---:|
+| `BASE` | 0 |
+| `FOOD` | 1 |
+| `MEDICINE` | 2 |
+| `OXYGEN` | 3 |
+| `HABITAT` | 4 |
+
+Navigation direction is selected from the current checkpoint and active target:
+
+- `FORWARD_ROUTE` when target index is greater than current index
+- `REVERSE_ROUTE` when target index is less than current index
+- immediate stop/completion handling when target index equals current index
+
+`MISSION_5` and `RETURN_BASE` use `REVERSE_ROUTE` when the rover is at FOOD,
+MEDICINE, OXYGEN, or HABITAT. In reverse route mode, centered line readings use
+`motorController.backward()` and left/right corrections are inverted.
+
 Amazon Bedrock is implemented in Mission Control, not in ESP32 firmware.
 
 ## Project structure
@@ -400,6 +420,7 @@ Mission commands map to pickup and delivery checkpoints:
 | `MISSION_3` | `OXYGEN` | `OXYGEN` | `HABITAT` | Complete at HABITAT after oxygen pickup |
 | `MISSION_4` | `NONE` | `NONE` | `HABITAT` | Complete at HABITAT |
 | `MISSION_5` | `NONE` | `NONE` | `BASE` | Complete at BASE |
+| `RETURN_BASE` | `NONE` | `NONE` | `BASE` | Alias for `MISSION_5` |
 
 Mission phases published in MQTT status are:
 
@@ -441,10 +462,12 @@ MQTT status includes mission/cargo fields:
 
 - `mission_phase`
 - `mission_complete`
+- `navigation_direction`
 - `cargo`
 - `cargo_status`
 - `pickup_checkpoint`
 - `delivery_checkpoint`
+- `target_checkpoint`
 - `current_checkpoint`
 - `location`
 

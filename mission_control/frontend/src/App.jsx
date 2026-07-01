@@ -1084,7 +1084,9 @@ function App() {
   const roverCargoStatus = formatStatusValue(roverStatus?.cargo_status, "NONE");
   const roverPickupCheckpoint = formatStatusValue(roverStatus?.pickup_checkpoint, "--");
   const roverDeliveryCheckpoint = formatStatusValue(roverStatus?.delivery_checkpoint, "--");
+  const roverTargetCheckpoint = formatStatusValue(roverStatus?.target_checkpoint, "--");
   const roverCurrentCheckpoint = formatStatusValue(roverStatus?.current_checkpoint, roverLocation);
+  const roverNavigationDirection = formatStatusValue(roverStatus?.navigation_direction, "FORWARD_ROUTE");
   const roverMissionComplete = Boolean(roverStatus?.mission_complete);
   const roverBattery = Number.isFinite(Number(roverStatus?.battery)) ? `${roverStatus.battery}%` : "87%";
   const roverWifiRssi = Number.isFinite(Number(roverStatus?.wifi_rssi)) ? `${roverStatus.wifi_rssi} dBm` : "Unknown";
@@ -1315,7 +1317,9 @@ function App() {
               <div><dt>Cargo Status</dt><dd>{roverCargoStatus.replaceAll("_", " ")}</dd></div>
               <div><dt>Pickup</dt><dd>{roverPickupCheckpoint}</dd></div>
               <div><dt>Delivery</dt><dd>{roverDeliveryCheckpoint}</dd></div>
+              <div><dt>Target</dt><dd>{roverTargetCheckpoint}</dd></div>
               <div><dt>Checkpoint</dt><dd>{roverCurrentCheckpoint}</dd></div>
+              <div><dt>Direction</dt><dd>{roverNavigationDirection.replaceAll("_", " ")}</dd></div>
               <div><dt>Mission Complete</dt><dd className={roverMissionComplete ? "good" : ""}>{roverMissionComplete ? "YES" : "NO"}</dd></div>
               <div><dt>Location</dt><dd>{roverLocation}</dd></div>
               <div><dt>State</dt><dd>{roverRuntimeState.toUpperCase()}</dd></div>

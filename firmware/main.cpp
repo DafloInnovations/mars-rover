@@ -93,6 +93,11 @@ enum MissionPhase {
   MISSION_PHASE_RETURNING_BASE,
 };
 
+enum NavigationDirection {
+  NAVIGATION_FORWARD_ROUTE,
+  NAVIGATION_REVERSE_ROUTE,
+};
+
 MotorController motorController(kIn1Pin, kIn2Pin, kIn3Pin, kIn4Pin);
 LineSensor lineSensor(kLineSensorLeftPin,
                       kLineSensorCenterPin,
@@ -143,6 +148,7 @@ unsigned long lineFollowPausedUntilMs = 0;
 LastLineDirection lastLineDirection = LINE_DIR_CENTER;
 LineFollowState currentLineFollowState = LINE_STATE_UNKNOWN;
 MissionPhase missionPhase = MISSION_PHASE_IDLE;
+NavigationDirection navigationDirection = NAVIGATION_FORWARD_ROUTE;
 
 void publishRoverStatus();
 
@@ -291,6 +297,63 @@ const char* checkpointForUid(const String& uid) {
   }
 
   return kCheckpointUnknown;
+}
+
+/**
+ * @brief Returns the physical order index for a straight-line checkpoint.
+ */
+int checkpointIndex(const char* checkpoint) {
+  if (strcmp(checkpoint, kCheckpointBase) == 0) {
+    return 0;
+  }
+  if (strcmp(checkpoint, kCheckpointFood) == 0) {
+    return 1;
+  }
+  if (strcmp(checkpoint, kCheckpointMedicine) == 0) {
+    return 2;
+  }
+  if (strcmp(checkpoint, kCheckpointOxygen) == 0) {
+    return 3;
+  }
+  if (strcmp(checkpoint, kCheckpointHabitat) == 0) {
+    return 4;
+  }
+
+  return -1;
+}
+
+/**
+ * @brief Converts navigation direction to the MQTT status string.
+ */
+const char* navigationDirectionName(const NavigationDirection direction) {
+  return direction == NAVIGATION_REVERSE_ROUTE ? "REVERSE_ROUTE" : "FORWARD_ROUTE";
+}
+
+/**
+ * @brief Chooses forward or reverse travel based on current and target checkpoints.
+ *
+ * @return true when the target is the current checkpoint and no travel is needed.
+ */
+bool updateNavigationDirectionForTarget(const char* target) {
+  const int currentIndex = checkpointIndex(currentCheckpoint);
+  const int targetIndex = checkpointIndex(target);
+
+  if (currentIndex < 0 || targetIndex < 0) {
+    navigationDirection = NAVIGATION_FORWARD_ROUTE;
+    return false;
+  }
+
+  if (targetIndex > currentIndex) {
+    navigationDirection = NAVIGATION_FORWARD_ROUTE;
+    return false;
+  }
+
+  if (targetIndex < currentIndex) {
+    navigationDirection = NAVIGATION_REVERSE_ROUTE;
+    return false;
+  }
+
+  return true;
 }
 
 /**
@@ -481,6 +544,7 @@ void disableLineFollowing(const bool stopMotors) {
   copyStatusField(pickupCheckpoint, sizeof(pickupCheckpoint), "NONE");
   copyStatusField(deliveryCheckpoint, sizeof(deliveryCheckpoint), "NONE");
   copyStatusField(cargoStatus, sizeof(cargoStatus), "NONE");
+  navigationDirection = NAVIGATION_FORWARD_ROUTE;
 
   if (stopMotors) {
     motorController.stop();
@@ -501,6 +565,7 @@ void startLineFollowing() {
   lineFollowPausedUntilMs = 0;
   currentLineFollowState = LINE_STATE_UNKNOWN;
   lastLineDirection = LINE_DIR_CENTER;
+  navigationDirection = NAVIGATION_FORWARD_ROUTE;
   setRoverState("MOVING");
   Serial.println("ACK:LINE_FOLLOW_START");
   publishLog("LINE_FOLLOW_STARTED");
@@ -519,6 +584,7 @@ void startLineFollowTest() {
   lineFollowPausedUntilMs = 0;
   currentLineFollowState = LINE_STATE_UNKNOWN;
   lastLineDirection = LINE_DIR_CENTER;
+  navigationDirection = NAVIGATION_FORWARD_ROUTE;
   setRoverState("MOVING");
   Serial.println("LINE_FOLLOW_TEST_START");
   publishLog("LINE_FOLLOW_TEST_START");
@@ -535,6 +601,7 @@ void resetMissionNavigationState() {
   copyStatusField(pickupCheckpoint, sizeof(pickupCheckpoint), "NONE");
   copyStatusField(deliveryCheckpoint, sizeof(deliveryCheckpoint), "NONE");
   copyStatusField(cargoStatus, sizeof(cargoStatus), "NONE");
+  navigationDirection = NAVIGATION_FORWARD_ROUTE;
 }
 
 /**
@@ -608,6 +675,7 @@ void updateMissionPickupPause(const unsigned long now) {
   lineFollowPausedUntilMs = 0;
   missionPhase = MISSION_PHASE_GOING_TO_DELIVERY;
   setTargetCheckpoint(deliveryCheckpoint);
+  updateNavigationDirectionForTarget(deliveryCheckpoint);
   setRoverState("RUNNING");
   publishRoverStatus();
 }
@@ -711,23 +779,39 @@ void updateLineFollower() {
     logLineFollowState(LINE_STATE_CENTER);
     lastLineDirection = LINE_DIR_CENTER;
     setRoverState("MOVING");
-    motorController.forward();
+    if (navigationDirection == NAVIGATION_REVERSE_ROUTE) {
+      motorController.backward();
+    } else {
+      motorController.forward();
+    }
   } else if ((leftDetected && centerDetected && !rightDetected) ||
              (leftDetected && !centerDetected && !rightDetected)) {
     logLineFollowState(LINE_STATE_LEFT);
     lastLineDirection = LINE_DIR_LEFT;
     setRoverState("MOVING");
-    motorController.left();
+    if (navigationDirection == NAVIGATION_REVERSE_ROUTE) {
+      motorController.right();
+    } else {
+      motorController.left();
+    }
   } else if ((!leftDetected && centerDetected && rightDetected) ||
              (!leftDetected && !centerDetected && rightDetected)) {
     logLineFollowState(LINE_STATE_RIGHT);
     lastLineDirection = LINE_DIR_RIGHT;
     setRoverState("MOVING");
-    motorController.right();
+    if (navigationDirection == NAVIGATION_REVERSE_ROUTE) {
+      motorController.left();
+    } else {
+      motorController.right();
+    }
   } else if (leftDetected && centerDetected && rightDetected) {
     logLineFollowState(LINE_STATE_JUNCTION);
     setRoverState("MOVING");
-    motorController.forward();
+    if (navigationDirection == NAVIGATION_REVERSE_ROUTE) {
+      motorController.backward();
+    } else {
+      motorController.forward();
+    }
   } else {
     logLineFollowState(LINE_STATE_LOST);
     motorController.stop();
@@ -793,7 +877,8 @@ bool isSupportedCommand(const char* command) {
          strcmp(command, "MISSION_2") == 0 ||
          strcmp(command, "MISSION_3") == 0 ||
          strcmp(command, "MISSION_4") == 0 ||
-         strcmp(command, "MISSION_5") == 0;
+         strcmp(command, "MISSION_5") == 0 ||
+         strcmp(command, "RETURN_BASE") == 0;
 }
 
 /**
@@ -851,20 +936,21 @@ void runMotorTest() {
  * @param command Mission command from MISSION_1 through MISSION_5.
  */
 void runMission(const char* command) {
+  const char* missionCommand = strcmp(command, "RETURN_BASE") == 0 ? "MISSION_5" : command;
   motorController.stop();
-  setCurrentMission(command);
-  copyStatusField(currentCargo, sizeof(currentCargo), cargoForMission(command));
+  setCurrentMission(missionCommand);
+  copyStatusField(currentCargo, sizeof(currentCargo), cargoForMission(missionCommand));
   copyStatusField(pickupCheckpoint,
                   sizeof(pickupCheckpoint),
-                  pickupCheckpointForMission(command));
+                  pickupCheckpointForMission(missionCommand));
   copyStatusField(deliveryCheckpoint,
                   sizeof(deliveryCheckpoint),
-                  deliveryCheckpointForMission(command));
+                  deliveryCheckpointForMission(missionCommand));
   copyStatusField(cargoStatus,
                   sizeof(cargoStatus),
                   strcmp(currentCargo, "NONE") == 0 ? "NO_CARGO" : "AWAITING_PICKUP");
 
-  if (strcmp(command, "MISSION_5") == 0) {
+  if (strcmp(missionCommand, "MISSION_5") == 0) {
     missionPhase = MISSION_PHASE_RETURNING_BASE;
     setTargetCheckpoint(deliveryCheckpoint);
   } else if (strcmp(pickupCheckpoint, "NONE") == 0) {
@@ -874,6 +960,7 @@ void runMission(const char* command) {
     missionPhase = MISSION_PHASE_GOING_TO_PICKUP;
     setTargetCheckpoint(pickupCheckpoint);
   }
+  const bool alreadyAtTarget = updateNavigationDirectionForTarget(targetCheckpoint);
 
   missionNavigationActive = true;
   lineFollowEnabled = true;
@@ -887,12 +974,20 @@ void runMission(const char* command) {
   setRoverState("RUNNING");
 
   Serial.print("MISSION_START:");
-  Serial.println(command);
+  Serial.println(missionCommand);
   Serial.print("TARGET_CHECKPOINT:");
   Serial.println(targetCheckpoint);
-  publishCommandLog("MISSION_START:", command);
+  publishCommandLog("MISSION_START:", missionCommand);
   publishLog("LINE_FOLLOW_STARTED");
   publishRoverStatus();
+
+  if (alreadyAtTarget) {
+    if (missionPhase == MISSION_PHASE_GOING_TO_PICKUP) {
+      completePickupAtCheckpoint(currentCheckpoint);
+    } else {
+      completeMissionAtCheckpoint(currentCheckpoint);
+    }
+  }
 }
 
 /**
@@ -1071,7 +1166,8 @@ void executeCommand(const char* command) {
              strcmp(command, "MISSION_2") == 0 ||
              strcmp(command, "MISSION_3") == 0 ||
              strcmp(command, "MISSION_4") == 0 ||
-             strcmp(command, "MISSION_5") == 0) {
+             strcmp(command, "MISSION_5") == 0 ||
+             strcmp(command, "RETURN_BASE") == 0) {
     Serial.print("ACK:");
     Serial.println(command);
     runMission(command);
@@ -1195,14 +1291,16 @@ void publishRoverStatus() {
   const long wifiRssi = mqttManager.isWifiConnected() ? WiFi.RSSI() : 0;
   const unsigned long uptimeSeconds = millis() / 1000;
 
-  char statusPayload[768] = {};
+  char statusPayload[896] = {};
   snprintf(statusPayload,
            sizeof(statusPayload),
            "{\"rover_id\":\"%s\",\"firmware\":\"v0.9\",\"mission\":\"%s\","
            "\"mission_phase\":\"%s\",\"mission_complete\":%s,"
+           "\"navigation_direction\":\"%s\","
            "\"state\":\"%s\",\"location\":\"%s\","
            "\"cargo\":\"%s\",\"cargo_status\":\"%s\","
            "\"pickup_checkpoint\":\"%s\",\"delivery_checkpoint\":\"%s\","
+           "\"target_checkpoint\":\"%s\","
            "\"current_checkpoint\":\"%s\",\"battery\":87,"
            "\"wifi_rssi\":%ld,\"uptime\":%lu,\"line\":\"%s\","
            "\"line_follow\":\"%s\",\"line_state\":\"%s\","
@@ -1211,12 +1309,14 @@ void publishRoverStatus() {
            currentMission,
            missionPhaseName(missionPhase),
            missionPhase == MISSION_PHASE_DELIVERED ? "true" : "false",
+           navigationDirectionName(navigationDirection),
            roverState,
            roverLocation,
            currentCargo,
            cargoStatus,
            pickupCheckpoint,
            deliveryCheckpoint,
+           targetCheckpoint,
            currentCheckpoint,
            wifiRssi,
            uptimeSeconds,

@@ -60,7 +60,7 @@ void MqttClientManager::begin(MqttMessageCallback callback) {
   }
   mqttClient_.setServer(brokerHost_, brokerPort_);
   mqttClient_.setCallback(MqttClientManager::handleMqttMessage);
-  mqttClient_.setBufferSize(768);
+  mqttClient_.setBufferSize(1024);
 
   connectWifiIfNeeded();
   connectMqttIfNeeded();
