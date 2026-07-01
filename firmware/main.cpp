@@ -45,6 +45,7 @@ constexpr unsigned long kLineTestDurationMs = 20000;
 constexpr unsigned long kLineSampleIntervalMs = 300;
 constexpr unsigned long kLineFollowIntervalMs = 40;
 constexpr unsigned long kLineFollowJunctionPauseMs = 300;
+constexpr unsigned long kPickupPauseDurationMs = 1000;
 constexpr unsigned long kLineFollowTestDurationMs = 20000;
 constexpr unsigned long kRfidTestDurationMs = 20000;
 constexpr unsigned long kSelfTestRfidDurationMs = 5000;
@@ -83,6 +84,15 @@ enum LineFollowState {
   LINE_STATE_LOST,
 };
 
+enum MissionPhase {
+  MISSION_PHASE_IDLE,
+  MISSION_PHASE_GOING_TO_PICKUP,
+  MISSION_PHASE_PICKUP_PAUSE,
+  MISSION_PHASE_GOING_TO_DELIVERY,
+  MISSION_PHASE_DELIVERED,
+  MISSION_PHASE_RETURNING_BASE,
+};
+
 MotorController motorController(kIn1Pin, kIn2Pin, kIn3Pin, kIn4Pin);
 LineSensor lineSensor(kLineSensorLeftPin,
                       kLineSensorCenterPin,
@@ -116,6 +126,11 @@ char currentMission[16] = "none";
 char roverState[18] = "IDLE";
 char roverLocation[12] = "BASE";
 char targetCheckpoint[12] = "UNKNOWN";
+char currentCargo[12] = "NONE";
+char pickupCheckpoint[12] = "NONE";
+char deliveryCheckpoint[12] = "NONE";
+char currentCheckpoint[12] = "BASE";
+char cargoStatus[24] = "NONE";
 char lastRfidUid[24] = "NONE";
 char servoState[8] = "CLOSED";
 bool lineFollowEnabled = false;
@@ -127,8 +142,22 @@ unsigned long lastLineFollowRfidScanMs = 0;
 unsigned long lineFollowPausedUntilMs = 0;
 LastLineDirection lastLineDirection = LINE_DIR_CENTER;
 LineFollowState currentLineFollowState = LINE_STATE_UNKNOWN;
+MissionPhase missionPhase = MISSION_PHASE_IDLE;
 
 void publishRoverStatus();
+
+/**
+ * @brief Copies a C string into a fixed-size firmware status field.
+ */
+void copyStatusField(char* destination, const size_t destinationSize, const char* value) {
+  if (destination == nullptr || destinationSize == 0) {
+    return;
+  }
+
+  const char* safeValue = value != nullptr ? value : "";
+  strncpy(destination, safeValue, destinationSize - 1);
+  destination[destinationSize - 1] = '\0';
+}
 
 /**
  * @brief Updates the rover's high-level state for MQTT status reporting.
@@ -136,8 +165,7 @@ void publishRoverStatus();
  * @param state One of IDLE, MOVING, MISSION_RUNNING, or ERROR.
  */
 void setRoverState(const char* state) {
-  strncpy(roverState, state, sizeof(roverState) - 1);
-  roverState[sizeof(roverState) - 1] = '\0';
+  copyStatusField(roverState, sizeof(roverState), state);
 }
 
 /**
@@ -146,8 +174,7 @@ void setRoverState(const char* state) {
  * @param mission Mission command or none.
  */
 void setCurrentMission(const char* mission) {
-  strncpy(currentMission, mission, sizeof(currentMission) - 1);
-  currentMission[sizeof(currentMission) - 1] = '\0';
+  copyStatusField(currentMission, sizeof(currentMission), mission);
 }
 
 /**
@@ -156,8 +183,7 @@ void setCurrentMission(const char* mission) {
  * @param location Simulated location label.
  */
 void setRoverLocation(const char* location) {
-  strncpy(roverLocation, location, sizeof(roverLocation) - 1);
-  roverLocation[sizeof(roverLocation) - 1] = '\0';
+  copyStatusField(roverLocation, sizeof(roverLocation), location);
 }
 
 /**
@@ -166,8 +192,36 @@ void setRoverLocation(const char* location) {
  * @param checkpoint One of BASE, FOOD, MEDICINE, OXYGEN, HABITAT, or UNKNOWN.
  */
 void setTargetCheckpoint(const char* checkpoint) {
-  strncpy(targetCheckpoint, checkpoint, sizeof(targetCheckpoint) - 1);
-  targetCheckpoint[sizeof(targetCheckpoint) - 1] = '\0';
+  copyStatusField(targetCheckpoint, sizeof(targetCheckpoint), checkpoint);
+}
+
+/**
+ * @brief Updates the currently detected checkpoint and public location field.
+ */
+void setCurrentCheckpoint(const char* checkpoint) {
+  copyStatusField(currentCheckpoint, sizeof(currentCheckpoint), checkpoint);
+  setRoverLocation(checkpoint);
+}
+
+/**
+ * @brief Converts the mission phase enum to the MQTT status string.
+ */
+const char* missionPhaseName(const MissionPhase phase) {
+  switch (phase) {
+    case MISSION_PHASE_GOING_TO_PICKUP:
+      return "GOING_TO_PICKUP";
+    case MISSION_PHASE_PICKUP_PAUSE:
+      return "PICKUP_PAUSE";
+    case MISSION_PHASE_GOING_TO_DELIVERY:
+      return "GOING_TO_DELIVERY";
+    case MISSION_PHASE_DELIVERED:
+      return "DELIVERED";
+    case MISSION_PHASE_RETURNING_BASE:
+      return "RETURNING_BASE";
+    case MISSION_PHASE_IDLE:
+    default:
+      return "IDLE";
+  }
 }
 
 /**
@@ -240,9 +294,9 @@ const char* checkpointForUid(const String& uid) {
 }
 
 /**
- * @brief Selects the target checkpoint for a mission command.
+ * @brief Selects the pickup checkpoint for a mission command.
  */
-const char* targetCheckpointForMission(const char* command) {
+const char* pickupCheckpointForMission(const char* command) {
   if (strcmp(command, "MISSION_1") == 0) {
     return kCheckpointFood;
   }
@@ -252,14 +306,42 @@ const char* targetCheckpointForMission(const char* command) {
   if (strcmp(command, "MISSION_3") == 0) {
     return kCheckpointOxygen;
   }
-  if (strcmp(command, "MISSION_4") == 0) {
-    return kCheckpointHabitat;
-  }
+
+  return "NONE";
+}
+
+/**
+ * @brief Selects the delivery/destination checkpoint for a mission command.
+ */
+const char* deliveryCheckpointForMission(const char* command) {
   if (strcmp(command, "MISSION_5") == 0) {
     return kCheckpointBase;
   }
+  if (strcmp(command, "MISSION_1") == 0 ||
+      strcmp(command, "MISSION_2") == 0 ||
+      strcmp(command, "MISSION_3") == 0 ||
+      strcmp(command, "MISSION_4") == 0) {
+    return kCheckpointHabitat;
+  }
 
   return kCheckpointUnknown;
+}
+
+/**
+ * @brief Selects the cargo label for a mission command.
+ */
+const char* cargoForMission(const char* command) {
+  if (strcmp(command, "MISSION_1") == 0) {
+    return kCheckpointFood;
+  }
+  if (strcmp(command, "MISSION_2") == 0) {
+    return kCheckpointMedicine;
+  }
+  if (strcmp(command, "MISSION_3") == 0) {
+    return kCheckpointOxygen;
+  }
+
+  return "NONE";
 }
 
 /**
@@ -392,7 +474,13 @@ void disableLineFollowing(const bool stopMotors) {
   lineFollowEnabled = false;
   lineFollowTestActive = false;
   missionNavigationActive = false;
+  missionPhase = MISSION_PHASE_IDLE;
   lineFollowPausedUntilMs = 0;
+  setTargetCheckpoint(kCheckpointUnknown);
+  copyStatusField(currentCargo, sizeof(currentCargo), "NONE");
+  copyStatusField(pickupCheckpoint, sizeof(pickupCheckpoint), "NONE");
+  copyStatusField(deliveryCheckpoint, sizeof(deliveryCheckpoint), "NONE");
+  copyStatusField(cargoStatus, sizeof(cargoStatus), "NONE");
 
   if (stopMotors) {
     motorController.stop();
@@ -437,16 +525,66 @@ void startLineFollowTest() {
 }
 
 /**
- * @brief Completes the active RFID checkpoint mission at the detected target.
+ * @brief Resets mission-specific status fields when manual/diagnostic control takes over.
+ */
+void resetMissionNavigationState() {
+  missionNavigationActive = false;
+  missionPhase = MISSION_PHASE_IDLE;
+  setTargetCheckpoint(kCheckpointUnknown);
+  copyStatusField(currentCargo, sizeof(currentCargo), "NONE");
+  copyStatusField(pickupCheckpoint, sizeof(pickupCheckpoint), "NONE");
+  copyStatusField(deliveryCheckpoint, sizeof(deliveryCheckpoint), "NONE");
+  copyStatusField(cargoStatus, sizeof(cargoStatus), "NONE");
+}
+
+/**
+ * @brief Marks mission cargo as picked up and pauses without blocking MQTT/Serial.
+ */
+void completePickupAtCheckpoint(const char* checkpoint) {
+  motorController.stop();
+  setCurrentCheckpoint(checkpoint);
+  missionPhase = MISSION_PHASE_PICKUP_PAUSE;
+  setRoverState("IDLE");
+
+  char pickedUpStatus[sizeof(cargoStatus)] = {};
+  snprintf(pickedUpStatus, sizeof(pickedUpStatus), "PICKED_UP_%s", currentCargo);
+  copyStatusField(cargoStatus, sizeof(cargoStatus), pickedUpStatus);
+
+  Serial.print("PICKUP_COMPLETE:");
+  Serial.println(currentCargo);
+
+  char logMessage[48] = {};
+  snprintf(logMessage, sizeof(logMessage), "PICKUP_COMPLETE:%s", currentCargo);
+  publishLog(logMessage);
+  publishRoverStatus();
+
+  lineFollowPausedUntilMs = millis() + kPickupPauseDurationMs;
+}
+
+/**
+ * @brief Completes the active RFID checkpoint mission at the delivery target.
  */
 void completeMissionAtCheckpoint(const char* checkpoint) {
   motorController.stop();
   lineFollowEnabled = false;
   lineFollowTestActive = false;
   missionNavigationActive = false;
+  missionPhase = MISSION_PHASE_DELIVERED;
   lineFollowPausedUntilMs = 0;
-  setRoverLocation(checkpoint);
+  setCurrentCheckpoint(checkpoint);
   setRoverState("IDLE");
+
+  if (strcmp(currentCargo, "NONE") == 0) {
+    if (strcmp(checkpoint, kCheckpointBase) == 0) {
+      copyStatusField(cargoStatus, sizeof(cargoStatus), "RETURNED_BASE");
+    } else {
+      copyStatusField(cargoStatus, sizeof(cargoStatus), "ARRIVED");
+    }
+  } else {
+    char deliveredStatus[sizeof(cargoStatus)] = {};
+    snprintf(deliveredStatus, sizeof(deliveredStatus), "DELIVERED_%s", currentCargo);
+    copyStatusField(cargoStatus, sizeof(cargoStatus), deliveredStatus);
+  }
 
   Serial.print("MISSION_COMPLETE:");
   Serial.println(currentMission);
@@ -455,10 +593,31 @@ void completeMissionAtCheckpoint(const char* checkpoint) {
 }
 
 /**
+ * @brief Resumes line following after the non-blocking pickup pause expires.
+ */
+void updateMissionPickupPause(const unsigned long now) {
+  if (missionPhase != MISSION_PHASE_PICKUP_PAUSE) {
+    return;
+  }
+
+  if (now < lineFollowPausedUntilMs) {
+    motorController.stop();
+    return;
+  }
+
+  lineFollowPausedUntilMs = 0;
+  missionPhase = MISSION_PHASE_GOING_TO_DELIVERY;
+  setTargetCheckpoint(deliveryCheckpoint);
+  setRoverState("RUNNING");
+  publishRoverStatus();
+}
+
+/**
  * @brief Checks for RFID checkpoints while autonomous line following is active.
  */
 void scanRfidCheckpointDuringLineFollow(const unsigned long now) {
   if (!rfidReader.isInitialized() ||
+      missionPhase == MISSION_PHASE_PICKUP_PAUSE ||
       now - lastLineFollowRfidScanMs < kRfidScanIntervalMs) {
     return;
   }
@@ -475,12 +634,27 @@ void scanRfidCheckpointDuringLineFollow(const unsigned long now) {
 
   Serial.print("RFID_CHECKPOINT:");
   Serial.println(checkpoint);
+  setCurrentCheckpoint(checkpoint);
 
   if (!missionNavigationActive) {
     return;
   }
 
-  if (strcmp(checkpoint, targetCheckpoint) == 0) {
+  if (strcmp(checkpoint, kCheckpointUnknown) == 0) {
+    Serial.print("CONTINUE_TO:");
+    Serial.println(targetCheckpoint);
+    return;
+  }
+
+  if (missionPhase == MISSION_PHASE_GOING_TO_PICKUP &&
+      strcmp(checkpoint, pickupCheckpoint) == 0) {
+    completePickupAtCheckpoint(checkpoint);
+    return;
+  }
+
+  if ((missionPhase == MISSION_PHASE_GOING_TO_DELIVERY ||
+       missionPhase == MISSION_PHASE_RETURNING_BASE) &&
+      strcmp(checkpoint, deliveryCheckpoint) == 0) {
     completeMissionAtCheckpoint(checkpoint);
     return;
   }
@@ -500,6 +674,11 @@ void updateLineFollower() {
   const unsigned long now = millis();
   scanRfidCheckpointDuringLineFollow(now);
   if (!lineFollowEnabled) {
+    return;
+  }
+
+  updateMissionPickupPause(now);
+  if (missionPhase == MISSION_PHASE_PICKUP_PAUSE) {
     return;
   }
 
@@ -674,7 +853,28 @@ void runMotorTest() {
 void runMission(const char* command) {
   motorController.stop();
   setCurrentMission(command);
-  setTargetCheckpoint(targetCheckpointForMission(command));
+  copyStatusField(currentCargo, sizeof(currentCargo), cargoForMission(command));
+  copyStatusField(pickupCheckpoint,
+                  sizeof(pickupCheckpoint),
+                  pickupCheckpointForMission(command));
+  copyStatusField(deliveryCheckpoint,
+                  sizeof(deliveryCheckpoint),
+                  deliveryCheckpointForMission(command));
+  copyStatusField(cargoStatus,
+                  sizeof(cargoStatus),
+                  strcmp(currentCargo, "NONE") == 0 ? "NO_CARGO" : "AWAITING_PICKUP");
+
+  if (strcmp(command, "MISSION_5") == 0) {
+    missionPhase = MISSION_PHASE_RETURNING_BASE;
+    setTargetCheckpoint(deliveryCheckpoint);
+  } else if (strcmp(pickupCheckpoint, "NONE") == 0) {
+    missionPhase = MISSION_PHASE_GOING_TO_DELIVERY;
+    setTargetCheckpoint(deliveryCheckpoint);
+  } else {
+    missionPhase = MISSION_PHASE_GOING_TO_PICKUP;
+    setTargetCheckpoint(pickupCheckpoint);
+  }
+
   missionNavigationActive = true;
   lineFollowEnabled = true;
   lineFollowTestActive = false;
@@ -995,18 +1195,29 @@ void publishRoverStatus() {
   const long wifiRssi = mqttManager.isWifiConnected() ? WiFi.RSSI() : 0;
   const unsigned long uptimeSeconds = millis() / 1000;
 
-  char statusPayload[448] = {};
+  char statusPayload[768] = {};
   snprintf(statusPayload,
            sizeof(statusPayload),
            "{\"rover_id\":\"%s\",\"firmware\":\"v0.9\",\"mission\":\"%s\","
-           "\"state\":\"%s\",\"location\":\"%s\",\"battery\":87,"
+           "\"mission_phase\":\"%s\",\"mission_complete\":%s,"
+           "\"state\":\"%s\",\"location\":\"%s\","
+           "\"cargo\":\"%s\",\"cargo_status\":\"%s\","
+           "\"pickup_checkpoint\":\"%s\",\"delivery_checkpoint\":\"%s\","
+           "\"current_checkpoint\":\"%s\",\"battery\":87,"
            "\"wifi_rssi\":%ld,\"uptime\":%lu,\"line\":\"%s\","
            "\"line_follow\":\"%s\",\"line_state\":\"%s\","
            "\"rfid\":\"%s\",\"servo\":\"%s\",\"timestamp\":%lu}",
            ROVER_ID,
            currentMission,
+           missionPhaseName(missionPhase),
+           missionPhase == MISSION_PHASE_DELIVERED ? "true" : "false",
            roverState,
            roverLocation,
+           currentCargo,
+           cargoStatus,
+           pickupCheckpoint,
+           deliveryCheckpoint,
+           currentCheckpoint,
            wifiRssi,
            uptimeSeconds,
            lineState,

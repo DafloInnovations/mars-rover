@@ -61,9 +61,9 @@ const validRoadGraph = {
 };
 
 const missionStops = {
-  1: ["food"],
-  2: ["medicine"],
-  3: ["oxygen"],
+  1: ["food", "habitat"],
+  2: ["medicine", "habitat"],
+  3: ["oxygen", "habitat"],
   4: ["habitat"],
   5: ["base"],
 };
@@ -1079,6 +1079,13 @@ function App() {
   const roverMission = formatStatusValue(roverStatus?.mission ?? roverStatus?.current_mission, "none");
   const roverLocation = formatStatusValue(roverStatus?.location, "unknown");
   const roverRuntimeState = formatStatusValue(roverStatus?.state, "Unknown");
+  const roverMissionPhase = formatStatusValue(roverStatus?.mission_phase, "IDLE");
+  const roverCargo = formatStatusValue(roverStatus?.cargo, "NONE");
+  const roverCargoStatus = formatStatusValue(roverStatus?.cargo_status, "NONE");
+  const roverPickupCheckpoint = formatStatusValue(roverStatus?.pickup_checkpoint, "--");
+  const roverDeliveryCheckpoint = formatStatusValue(roverStatus?.delivery_checkpoint, "--");
+  const roverCurrentCheckpoint = formatStatusValue(roverStatus?.current_checkpoint, roverLocation);
+  const roverMissionComplete = Boolean(roverStatus?.mission_complete);
   const roverBattery = Number.isFinite(Number(roverStatus?.battery)) ? `${roverStatus.battery}%` : "87%";
   const roverWifiRssi = Number.isFinite(Number(roverStatus?.wifi_rssi)) ? `${roverStatus.wifi_rssi} dBm` : "Unknown";
   const roverUptime = formatUptime(roverStatus?.uptime);
@@ -1105,8 +1112,12 @@ function App() {
     : roverMission && roverMission !== "none"
       ? roverMission
       : "No active mission";
-  const missionPriority = activeMission ? "HIGH" : "STANDBY";
-  const missionBadge = activeMission ? `MISSION ${activeMission.id}` : "IDLE";
+  const missionPriority = activeMission || roverMissionPhase !== "IDLE" ? "HIGH" : "STANDBY";
+  const missionBadge = activeMission
+    ? `MISSION ${activeMission.id}`
+    : roverMissionComplete
+      ? "COMPLETE"
+      : roverMissionPhase;
   const voiceExampleToPrompt = (phrase) => {
     setAiPrompt(phrase);
     addEvent("VOICE", `Example selected: “${phrase}”`);
@@ -1154,7 +1165,7 @@ function App() {
             <span>Mission Progress</span>
             <strong className="large-green">{missionProgress}%</strong>
             <div className="status-progress"><i style={{ width: `${missionProgress}%` }} /></div>
-            <small>Path Progress</small>
+            <small>Phase: <b>{roverMissionPhase.replaceAll("_", " ")}</b></small>
           </div>
           <div>
             <span>Rover Status</span>
@@ -1173,7 +1184,7 @@ function App() {
           <div>
             <span>Current Location</span>
             <strong>{animationState.isMoving ? `En Route to ${nextWaypointLabel}` : currentWaypointLabel}</strong>
-            <small>Next Waypoint: <b>{nextWaypointLabel}</b></small>
+            <small>Pickup: <b>{roverPickupCheckpoint}</b> · Delivery: <b>{roverDeliveryCheckpoint}</b></small>
           </div>
         </div>
       </section>
@@ -1299,6 +1310,13 @@ function App() {
               <div><dt>Wi-Fi RSSI</dt><dd>{roverWifiRssi}</dd></div>
               <div><dt>Firmware</dt><dd>{roverFirmware}</dd></div>
               <div><dt>Mission</dt><dd>{roverMission.toUpperCase()}</dd></div>
+              <div><dt>Mission Phase</dt><dd>{roverMissionPhase.replaceAll("_", " ")}</dd></div>
+              <div><dt>Cargo</dt><dd>{roverCargo}</dd></div>
+              <div><dt>Cargo Status</dt><dd>{roverCargoStatus.replaceAll("_", " ")}</dd></div>
+              <div><dt>Pickup</dt><dd>{roverPickupCheckpoint}</dd></div>
+              <div><dt>Delivery</dt><dd>{roverDeliveryCheckpoint}</dd></div>
+              <div><dt>Checkpoint</dt><dd>{roverCurrentCheckpoint}</dd></div>
+              <div><dt>Mission Complete</dt><dd className={roverMissionComplete ? "good" : ""}>{roverMissionComplete ? "YES" : "NO"}</dd></div>
               <div><dt>Location</dt><dd>{roverLocation}</dd></div>
               <div><dt>State</dt><dd>{roverRuntimeState.toUpperCase()}</dd></div>
               <div><dt>Uptime</dt><dd>{roverUptime}</dd></div>

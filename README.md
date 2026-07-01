@@ -102,11 +102,11 @@ Commands are newline-delimited and accepted at 115200 baud:
 | `SERVO_CLOSE` | Move the SG90 cargo servo to 0 degrees |
 | `SERVO_TEST` | Open, wait one second, then close |
 | `SELF_TEST` | Run the combined motor, line, RFID, and servo diagnostic |
-| `MISSION_1` | Follow the line until the FOOD RFID checkpoint |
-| `MISSION_2` | Follow the line until the MEDICINE RFID checkpoint |
-| `MISSION_3` | Follow the line until the OXYGEN RFID checkpoint |
-| `MISSION_4` | Follow the line until the HABITAT RFID checkpoint |
-| `MISSION_5` | Follow the line until the BASE RFID checkpoint |
+| `MISSION_1` | Pick up FOOD, then deliver it to HABITAT |
+| `MISSION_2` | Pick up MEDICINE, then deliver it to HABITAT |
+| `MISSION_3` | Pick up OXYGEN, then deliver it to HABITAT |
+| `MISSION_4` | Go directly to HABITAT |
+| `MISSION_5` | Return to BASE |
 
 Valid commands return `ACK:<COMMAND>`. Unknown commands return
 `ERR:UNKNOWN_COMMAND`. Input is case-insensitive and accepts either LF or CRLF
@@ -136,9 +136,10 @@ The rover does not move automatically after boot.
 
 ## Mission command examples
 
-Mission commands are acknowledged before line following begins. Completion is
-reported only after the target RFID checkpoint is detected and the rover has
-stopped:
+Mission commands are acknowledged before line following begins. Delivery
+missions stop briefly at the pickup checkpoint, then continue to HABITAT.
+Completion is reported only after the final destination is detected and the
+rover has stopped:
 
 ```text
 MISSION_2
@@ -148,6 +149,10 @@ TARGET_CHECKPOINT:MEDICINE
 RFID_CHECKPOINT:FOOD
 CONTINUE_TO:MEDICINE
 RFID_CHECKPOINT:MEDICINE
+PICKUP_COMPLETE:MEDICINE
+RFID_CHECKPOINT:OXYGEN
+CONTINUE_TO:HABITAT
+RFID_CHECKPOINT:HABITAT
 MISSION_COMPLETE:MISSION_2
 ```
 
@@ -386,33 +391,62 @@ The physical course is one black line with RFID checkpoints in this order:
 BASE → FOOD → MEDICINE → OXYGEN → HABITAT
 ```
 
-Mission commands map to target checkpoints:
+Mission commands map to pickup and delivery checkpoints:
 
-| Mission | Target checkpoint |
-|---|---|
-| `MISSION_1` | `FOOD` |
-| `MISSION_2` | `MEDICINE` |
-| `MISSION_3` | `OXYGEN` |
-| `MISSION_4` | `HABITAT` |
-| `MISSION_5` | `BASE` |
+| Mission | Cargo | Pickup checkpoint | Delivery / destination checkpoint | Completion condition |
+|---|---|---|---|---|
+| `MISSION_1` | `FOOD` | `FOOD` | `HABITAT` | Complete at HABITAT after food pickup |
+| `MISSION_2` | `MEDICINE` | `MEDICINE` | `HABITAT` | Complete at HABITAT after medicine pickup |
+| `MISSION_3` | `OXYGEN` | `OXYGEN` | `HABITAT` | Complete at HABITAT after oxygen pickup |
+| `MISSION_4` | `NONE` | `NONE` | `HABITAT` | Complete at HABITAT |
+| `MISSION_5` | `NONE` | `NONE` | `BASE` | Complete at BASE |
 
-When a mission starts, Su-Par1 sets the target checkpoint, enables autonomous
-line following, and scans RFID while moving. If a checkpoint is detected before
-the target, the rover logs it and continues:
+Mission phases published in MQTT status are:
+
+- `IDLE`
+- `GOING_TO_PICKUP`
+- `PICKUP_PAUSE`
+- `GOING_TO_DELIVERY`
+- `DELIVERED`
+- `RETURNING_BASE`
+
+When a mission starts, Su-Par1 sets the pickup/delivery checkpoints, enables
+autonomous line following, and scans RFID while moving. If a checkpoint is
+detected before the active target, the rover logs it and continues:
 
 ```text
 RFID_CHECKPOINT:FOOD
 CONTINUE_TO:OXYGEN
 ```
 
-When the detected checkpoint matches the target, Su-Par1 stops, disables line
-following, publishes an `IDLE` status with `location` set to the checkpoint, and
-prints:
+When the pickup checkpoint is detected, Su-Par1 stops for a one-second
+non-blocking pause, updates `cargo_status`, publishes MQTT status, and resumes
+line following toward HABITAT:
 
 ```text
 RFID_CHECKPOINT:OXYGEN
+PICKUP_COMPLETE:OXYGEN
+```
+
+When the delivery/destination checkpoint is detected, Su-Par1 stops, disables
+line following, publishes an `IDLE` status with `location` set to the checkpoint,
+and prints:
+
+```text
+RFID_CHECKPOINT:HABITAT
 MISSION_COMPLETE:MISSION_3
 ```
+
+MQTT status includes mission/cargo fields:
+
+- `mission_phase`
+- `mission_complete`
+- `cargo`
+- `cargo_status`
+- `pickup_checkpoint`
+- `delivery_checkpoint`
+- `current_checkpoint`
+- `location`
 
 Checkpoint UIDs are configured in `firmware/main.cpp`:
 
