@@ -745,12 +745,12 @@ button {
   }
 }
 
-.base-node { top: 56%; left: 7%; }
+.base-node { top: 48%; left: 7%; }
 .base-node > span { background: #07538f; border-color: #35b6ff; box-shadow: 0 0 14px rgba(53, 182, 255, 0.65); }
-.wha-node { top: 13%; left: 18%; }
-.whb-node { top: 14%; left: 66%; }
-.whc-node { bottom: 8%; left: 42%; }
-.habitat-node { top: 45%; right: 4%; }
+.food-node { top: 48%; left: 25%; }
+.medicine-node { top: 48%; left: 44%; }
+.oxygen-node { top: 48%; left: 63%; }
+.habitat-node { top: 48%; right: 5%; }
 .habitat-node > span { background: #6a238b; border-color: #dd6fff; box-shadow: 0 0 14px rgba(221, 111, 255, 0.6); }
 
 .rover-marker {

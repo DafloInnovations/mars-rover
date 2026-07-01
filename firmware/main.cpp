@@ -54,6 +54,20 @@ constexpr unsigned long kStatusPublishIntervalMs = 2000;
 constexpr size_t kCommandBufferSize = 32;
 constexpr size_t kMqttCommandBufferSize = 64;
 
+// Straight-line RFID checkpoint navigation:
+// BASE -> FOOD -> MEDICINE -> OXYGEN -> HABITAT.
+constexpr const char* kCheckpointBase = "BASE";
+constexpr const char* kCheckpointFood = "FOOD";
+constexpr const char* kCheckpointMedicine = "MEDICINE";
+constexpr const char* kCheckpointOxygen = "OXYGEN";
+constexpr const char* kCheckpointHabitat = "HABITAT";
+constexpr const char* kCheckpointUnknown = "UNKNOWN";
+constexpr const char* kUidBase = "5371C0FF220001";
+constexpr const char* kUidFood = "5372C0FF220001";
+constexpr const char* kUidMedicine = "536BC0FF220001";
+constexpr const char* kUidOxygen = "5368C0FF220001";
+constexpr const char* kUidHabitat = "5369C0FF220001";
+
 enum LastLineDirection {
   LINE_DIR_CENTER,
   LINE_DIR_LEFT,
@@ -100,13 +114,16 @@ bool wasWifiConnected = false;
 bool wasMqttConnected = false;
 char currentMission[16] = "none";
 char roverState[18] = "IDLE";
-char roverLocation[12] = "base";
+char roverLocation[12] = "BASE";
+char targetCheckpoint[12] = "UNKNOWN";
 char lastRfidUid[24] = "NONE";
 char servoState[8] = "CLOSED";
 bool lineFollowEnabled = false;
 bool lineFollowTestActive = false;
+bool missionNavigationActive = false;
 unsigned long lineFollowTestStartedAt = 0;
 unsigned long lastLineFollowUpdateMs = 0;
+unsigned long lastLineFollowRfidScanMs = 0;
 unsigned long lineFollowPausedUntilMs = 0;
 LastLineDirection lastLineDirection = LINE_DIR_CENTER;
 LineFollowState currentLineFollowState = LINE_STATE_UNKNOWN;
@@ -144,6 +161,16 @@ void setRoverLocation(const char* location) {
 }
 
 /**
+ * @brief Updates the active RFID checkpoint target for mission navigation.
+ *
+ * @param checkpoint One of BASE, FOOD, MEDICINE, OXYGEN, HABITAT, or UNKNOWN.
+ */
+void setTargetCheckpoint(const char* checkpoint) {
+  strncpy(targetCheckpoint, checkpoint, sizeof(targetCheckpoint) - 1);
+  targetCheckpoint[sizeof(targetCheckpoint) - 1] = '\0';
+}
+
+/**
  * @brief Updates the last detected RFID UID for MQTT status reporting.
  */
 void captureLastRfidUid() {
@@ -153,6 +180,96 @@ void captureLastRfidUid() {
   }
 
   uid.toCharArray(lastRfidUid, sizeof(lastRfidUid));
+}
+
+/**
+ * @brief Normalizes a UID by removing spaces/colons and forcing uppercase.
+ */
+String normalizeUid(const String& rawUid) {
+  String normalized;
+  normalized.reserve(rawUid.length());
+
+  for (size_t index = 0; index < rawUid.length(); ++index) {
+    const char character = rawUid.charAt(index);
+    if (character == ':' || isspace(static_cast<unsigned char>(character))) {
+      continue;
+    }
+    normalized += character;
+  }
+
+  normalized.toUpperCase();
+  return normalized;
+}
+
+/**
+ * @brief Compares an observed RFID UID against a configured checkpoint UID.
+ */
+bool uidMatches(const String& observedUid, const char* configuredUid) {
+  if (observedUid.length() == 0 || configuredUid == nullptr ||
+      configuredUid[0] == '\0') {
+    return false;
+  }
+
+  return normalizeUid(observedUid) == normalizeUid(String(configuredUid));
+}
+
+/**
+ * @brief Maps an RFID UID to a named straight-line checkpoint.
+ *
+ * Unknown or placeholder UID mappings intentionally return UNKNOWN so the rover
+ * can keep driving without crashing while tags are being commissioned.
+ */
+const char* checkpointForUid(const String& uid) {
+  if (uidMatches(uid, kUidBase)) {
+    return kCheckpointBase;
+  }
+  if (uidMatches(uid, kUidFood)) {
+    return kCheckpointFood;
+  }
+  if (uidMatches(uid, kUidMedicine)) {
+    return kCheckpointMedicine;
+  }
+  if (uidMatches(uid, kUidOxygen)) {
+    return kCheckpointOxygen;
+  }
+  if (uidMatches(uid, kUidHabitat)) {
+    return kCheckpointHabitat;
+  }
+
+  return kCheckpointUnknown;
+}
+
+/**
+ * @brief Selects the target checkpoint for a mission command.
+ */
+const char* targetCheckpointForMission(const char* command) {
+  if (strcmp(command, "MISSION_1") == 0) {
+    return kCheckpointFood;
+  }
+  if (strcmp(command, "MISSION_2") == 0) {
+    return kCheckpointMedicine;
+  }
+  if (strcmp(command, "MISSION_3") == 0) {
+    return kCheckpointOxygen;
+  }
+  if (strcmp(command, "MISSION_4") == 0) {
+    return kCheckpointHabitat;
+  }
+  if (strcmp(command, "MISSION_5") == 0) {
+    return kCheckpointBase;
+  }
+
+  return kCheckpointUnknown;
+}
+
+/**
+ * @brief Prints a UID and its mapped checkpoint for diagnostics.
+ */
+void printRfidUidAndCheckpoint(const String& uid, const char* checkpoint) {
+  Serial.print("RFID:UID=");
+  Serial.print(normalizeUid(uid));
+  Serial.print(",CHECKPOINT=");
+  Serial.println(checkpoint);
 }
 
 /**
@@ -274,6 +391,7 @@ void logLineFollowState(const LineFollowState state) {
 void disableLineFollowing(const bool stopMotors) {
   lineFollowEnabled = false;
   lineFollowTestActive = false;
+  missionNavigationActive = false;
   lineFollowPausedUntilMs = 0;
 
   if (stopMotors) {
@@ -288,8 +406,10 @@ void disableLineFollowing(const bool stopMotors) {
 void startLineFollowing() {
   lineFollowEnabled = true;
   lineFollowTestActive = false;
+  missionNavigationActive = false;
   lineFollowTestStartedAt = 0;
   lastLineFollowUpdateMs = 0;
+  lastLineFollowRfidScanMs = 0;
   lineFollowPausedUntilMs = 0;
   currentLineFollowState = LINE_STATE_UNKNOWN;
   lastLineDirection = LINE_DIR_CENTER;
@@ -304,14 +424,69 @@ void startLineFollowing() {
 void startLineFollowTest() {
   lineFollowEnabled = true;
   lineFollowTestActive = true;
+  missionNavigationActive = false;
   lineFollowTestStartedAt = millis();
   lastLineFollowUpdateMs = 0;
+  lastLineFollowRfidScanMs = 0;
   lineFollowPausedUntilMs = 0;
   currentLineFollowState = LINE_STATE_UNKNOWN;
   lastLineDirection = LINE_DIR_CENTER;
   setRoverState("MOVING");
   Serial.println("LINE_FOLLOW_TEST_START");
   publishLog("LINE_FOLLOW_TEST_START");
+}
+
+/**
+ * @brief Completes the active RFID checkpoint mission at the detected target.
+ */
+void completeMissionAtCheckpoint(const char* checkpoint) {
+  motorController.stop();
+  lineFollowEnabled = false;
+  lineFollowTestActive = false;
+  missionNavigationActive = false;
+  lineFollowPausedUntilMs = 0;
+  setRoverLocation(checkpoint);
+  setRoverState("IDLE");
+
+  Serial.print("MISSION_COMPLETE:");
+  Serial.println(currentMission);
+  publishCommandLog("MISSION_COMPLETE:", currentMission);
+  publishRoverStatus();
+}
+
+/**
+ * @brief Checks for RFID checkpoints while autonomous line following is active.
+ */
+void scanRfidCheckpointDuringLineFollow(const unsigned long now) {
+  if (!rfidReader.isInitialized() ||
+      now - lastLineFollowRfidScanMs < kRfidScanIntervalMs) {
+    return;
+  }
+  lastLineFollowRfidScanMs = now;
+
+  if (!rfidReader.isCardPresent()) {
+    return;
+  }
+
+  captureLastRfidUid();
+  const String detectedUid = rfidReader.readUID();
+  const char* checkpoint = checkpointForUid(detectedUid);
+  printRfidUidAndCheckpoint(detectedUid, checkpoint);
+
+  Serial.print("RFID_CHECKPOINT:");
+  Serial.println(checkpoint);
+
+  if (!missionNavigationActive) {
+    return;
+  }
+
+  if (strcmp(checkpoint, targetCheckpoint) == 0) {
+    completeMissionAtCheckpoint(checkpoint);
+    return;
+  }
+
+  Serial.print("CONTINUE_TO:");
+  Serial.println(targetCheckpoint);
 }
 
 /**
@@ -323,6 +498,10 @@ void updateLineFollower() {
   }
 
   const unsigned long now = millis();
+  scanRfidCheckpointDuringLineFollow(now);
+  if (!lineFollowEnabled) {
+    return;
+  }
 
   if (lineFollowTestActive &&
       now - lineFollowTestStartedAt >= kLineFollowTestDurationMs) {
@@ -368,9 +547,8 @@ void updateLineFollower() {
     motorController.right();
   } else if (leftDetected && centerDetected && rightDetected) {
     logLineFollowState(LINE_STATE_JUNCTION);
-    motorController.stop();
-    setRoverState("IDLE");
-    lineFollowPausedUntilMs = now + kLineFollowJunctionPauseMs;
+    setRoverState("MOVING");
+    motorController.forward();
   } else {
     logLineFollowState(LINE_STATE_LOST);
     motorController.stop();
@@ -485,59 +663,35 @@ void runMotorTest() {
 }
 
 /**
- * @brief Runs one predefined v0.4 mission movement sequence.
+ * @brief Starts straight-line RFID checkpoint navigation for a mission.
  *
- * Missions are intentionally deterministic placeholders. They provide an
- * end-to-end command path from Mission Control to the rover while autonomous
- * navigation and sensors remain outside this firmware release.
+ * The rover follows the black line continuously and scans RFID tags until the
+ * detected checkpoint matches the mission target. This function intentionally
+ * returns immediately so MQTT and Serial processing remain responsive.
  *
  * @param command Mission command from MISSION_1 through MISSION_5.
  */
 void runMission(const char* command) {
-  disableLineFollowing(true);
+  motorController.stop();
   setCurrentMission(command);
-  setRoverState("MISSION_RUNNING");
-  publishRoverStatus();
+  setTargetCheckpoint(targetCheckpointForMission(command));
+  missionNavigationActive = true;
+  lineFollowEnabled = true;
+  lineFollowTestActive = false;
+  lineFollowTestStartedAt = 0;
+  lastLineFollowUpdateMs = 0;
+  lastLineFollowRfidScanMs = 0;
+  lineFollowPausedUntilMs = 0;
+  currentLineFollowState = LINE_STATE_UNKNOWN;
+  lastLineDirection = LINE_DIR_CENTER;
+  setRoverState("RUNNING");
 
   Serial.print("MISSION_START:");
   Serial.println(command);
+  Serial.print("TARGET_CHECKPOINT:");
+  Serial.println(targetCheckpoint);
   publishCommandLog("MISSION_START:", command);
-
-  setRoverState("MOVING");
-  publishRoverStatus();
-  if (strcmp(command, "MISSION_1") == 0) {
-    motorController.forward();
-    delay(kMovementDurationMs);
-  } else if (strcmp(command, "MISSION_2") == 0) {
-    motorController.forward();
-    delay(kMovementDurationMs);
-    motorController.left();
-    delay(kMissionStepDurationMs);
-  } else if (strcmp(command, "MISSION_3") == 0) {
-    motorController.forward();
-    delay(kMovementDurationMs);
-    motorController.right();
-    delay(kMissionStepDurationMs);
-  } else if (strcmp(command, "MISSION_4") == 0) {
-    motorController.forward();
-    delay(kMissionStepDurationMs);
-    motorController.left();
-    delay(kMissionStepDurationMs);
-    motorController.forward();
-    delay(kMissionStepDurationMs);
-  } else {
-    // executeCommand() only calls this function for MISSION_5 at present.
-    motorController.backward();
-    delay(kMovementDurationMs);
-  }
-
-  motorController.stop();
-  setRoverState("IDLE");
-  Serial.print("MISSION_COMPLETE:");
-  Serial.println(command);
-  publishCommandLog("MISSION_COMPLETE:", command);
-  setCurrentMission("none");
-  setRoverLocation("base");
+  publishLog("LINE_FOLLOW_STARTED");
   publishRoverStatus();
 }
 
@@ -574,7 +728,7 @@ void runLineTest() {
  * @brief Scans for RC522-compatible cards for a total of 20 seconds.
  *
  * The rover is stopped before scanning. Each newly presented card is printed
- * once using its hexadecimal UID; no RFID value affects mission behavior.
+ * once using its normalized hexadecimal UID and mapped checkpoint.
  */
 void runRfidTest() {
   disableLineFollowing(true);
@@ -584,7 +738,8 @@ void runRfidTest() {
   while (millis() - startTime < kRfidTestDurationMs) {
     if (rfidReader.isCardPresent()) {
       captureLastRfidUid();
-      rfidReader.printUID();
+      const String detectedUid = rfidReader.readUID();
+      printRfidUidAndCheckpoint(detectedUid, checkpointForUid(detectedUid));
     }
     delay(kRfidScanIntervalMs);
   }
@@ -983,7 +1138,7 @@ void setup() {
  * @brief Services operator commands while leaving movement under manual control.
  *
  * No movement starts automatically. Manual motor commands, the legacy TEST
- * sequence, five simulated missions, line diagnostics, RFID diagnostics, and
+ * sequence, RFID checkpoint missions, line diagnostics, RFID diagnostics,
  * cargo-servo diagnostics, and the combined hardware self-test are available
  * on demand.
  */

@@ -26,79 +26,74 @@ const diagnosticCommands = [
 ];
 
 const missionDetails = {
-  1: { label: "Deliver Food", cargo: "Food", pickup: "wh-a", waypoint: "WH-A" },
-  2: { label: "Deliver Medicine", cargo: "Medicine", pickup: "wh-b", waypoint: "WH-B" },
-  3: { label: "Deliver Oxygen", cargo: "Oxygen", pickup: "wh-c", waypoint: "WH-C" },
-  4: { label: "Collect Research Sample", cargo: "Research Sample", pickup: "wh-a", waypoint: "HABITAT" },
+  1: { label: "Deliver Food", cargo: "Food Supplies", pickup: "food", waypoint: "FOOD" },
+  2: { label: "Deliver Medicine", cargo: "Medicine", pickup: "medicine", waypoint: "MEDICINE" },
+  3: { label: "Deliver Oxygen", cargo: "Oxygen", pickup: "oxygen", waypoint: "OXYGEN" },
+  4: { label: "Go to Habitat", cargo: "None", pickup: null, waypoint: "HABITAT" },
   5: { label: "Return to Base", cargo: "None", pickup: null, waypoint: "BASE" },
 };
 
 const mapWaypoints = {
-  base: { x: 120, y: 355, label: "Base" },
-  j1: { x: 500, y: 430, label: "J1" },
-  j2: { x: 500, y: 195, label: "J2" },
-  "wh-a": { x: 300, y: 195, label: "WH-A" },
-  "wh-b": { x: 720, y: 130, label: "WH-B" },
-  "wh-c": { x: 500, y: 525, label: "WH-C" },
-  habitat: { x: 900, y: 305, label: "Habitat" },
+  base: { x: 120, y: 310, label: "BASE" },
+  food: { x: 310, y: 310, label: "FOOD" },
+  medicine: { x: 500, y: 310, label: "MEDICINE" },
+  oxygen: { x: 690, y: 310, label: "OXYGEN" },
+  habitat: { x: 880, y: 310, label: "HABITAT" },
 };
 
 const routeSegments = {
-  "base>j1": ["base", { x: 250, y: 355 }, { x: 330, y: 430 }, "j1"],
-  "j1>base": ["j1", { x: 330, y: 430 }, { x: 250, y: 355 }, "base"],
-  "j1>j2": ["j1", "j2"],
-  "j2>j1": ["j2", "j1"],
-  "j2>wh-a": ["j2", "wh-a"],
-  "wh-a>j2": ["wh-a", "j2"],
-  "j2>wh-b": ["j2", { x: 720, y: 195 }, "wh-b"],
-  "wh-b>j2": ["wh-b", { x: 720, y: 195 }, "j2"],
-  "j1>wh-c": ["j1", "wh-c"],
-  "wh-c>j1": ["wh-c", "j1"],
-  "j2>habitat": ["j2", { x: 720, y: 195 }, { x: 750, y: 305 }, "habitat"],
-  "habitat>j2": ["habitat", { x: 750, y: 305 }, { x: 720, y: 195 }, "j2"],
+  "base>food": ["base", "food"],
+  "food>base": ["food", "base"],
+  "food>medicine": ["food", "medicine"],
+  "medicine>food": ["medicine", "food"],
+  "medicine>oxygen": ["medicine", "oxygen"],
+  "oxygen>medicine": ["oxygen", "medicine"],
+  "oxygen>habitat": ["oxygen", "habitat"],
+  "habitat>oxygen": ["habitat", "oxygen"],
 };
 
 const validRoadGraph = {
-  base: ["j1"],
-  j1: ["base", "j2", "wh-c"],
-  j2: ["j1", "wh-a", "wh-b", "habitat"],
-  "wh-a": ["j2"],
-  "wh-b": ["j2"],
-  "wh-c": ["j1"],
-  habitat: ["j2"],
+  base: ["food"],
+  food: ["base", "medicine"],
+  medicine: ["food", "oxygen"],
+  oxygen: ["medicine", "habitat"],
+  habitat: ["oxygen"],
 };
 
 const missionStops = {
-  1: ["wh-a", "habitat"],
-  2: ["wh-b", "habitat"],
-  3: ["wh-c", "habitat"],
-  4: ["wh-a", "wh-b", "habitat"],
+  1: ["food"],
+  2: ["medicine"],
+  3: ["oxygen"],
+  4: ["habitat"],
   5: ["base"],
 };
 
 const waypointAliases = {
   base: "base",
-  j1: "j1",
-  j2: "j2",
-  "wh-a": "wh-a",
-  wha: "wh-a",
-  "warehouse-a": "wh-a",
-  "wh-b": "wh-b",
-  whb: "wh-b",
-  "warehouse-b": "wh-b",
-  "wh-c": "wh-c",
-  whc: "wh-c",
-  "warehouse-c": "wh-c",
+  food: "food",
+  "food supplies": "food",
+  medicine: "medicine",
+  oxygen: "oxygen",
+  "wh-a": "food",
+  wha: "food",
+  wh_a: "food",
+  "warehouse-a": "food",
+  "wh-b": "medicine",
+  whb: "medicine",
+  wh_b: "medicine",
+  "warehouse-b": "medicine",
+  "wh-c": "oxygen",
+  whc: "oxygen",
+  wh_c: "oxygen",
+  "warehouse-c": "oxygen",
   habitat: "habitat",
 };
 
 const waypointLogMessages = {
   base: "Reached Base",
-  j1: "Reached J1",
-  j2: "Reached J2",
-  "wh-a": "Reached WH-A",
-  "wh-b": "Reached WH-B",
-  "wh-c": "Reached WH-C",
+  food: "Reached Food",
+  medicine: "Reached Medicine",
+  oxygen: "Reached Oxygen",
   habitat: "Reached Habitat",
 };
 
@@ -395,30 +390,27 @@ function ColonyMap({
           preserveAspectRatio="none"
           viewBox="0 0 1000 620"
         >
-          <path className="route planned" d="M120 355 L250 355 L330 430 L500 430" />
-          <path className="route planned" d="M500 430 L500 195 L720 195 L750 305" />
-          <path className="route planned" d="M500 430 L500 525" />
-          <path className="route planned" d="M720 195 L720 130" />
-          <path className="route planned" d="M750 305 L900 305" />
+          <path className="route planned" d="M120 310 L310 310 L500 310 L690 310 L880 310" />
           {plannedPath && <path className="mission-route planned" d={plannedPath} />}
           {completedPath && <path className="mission-route completed" d={completedPath} />}
-          <circle className="junction" cx="500" cy="430" r="7" />
-          <circle className="junction" cx="500" cy="195" r="7" />
-          <circle className="junction" cx="720" cy="195" r="7" />
-          <circle className="junction" cx="750" cy="305" r="7" />
+          <circle className="junction" cx="120" cy="310" r="7" />
+          <circle className="junction" cx="310" cy="310" r="7" />
+          <circle className="junction" cx="500" cy="310" r="7" />
+          <circle className="junction" cx="690" cy="310" r="7" />
+          <circle className="junction" cx="880" cy="310" r="7" />
         </svg>
 
         <div className={`map-node base-node ${currentWaypoint === "base" ? "current" : ""}`}>
           <span>⌂</span><strong>BASE</strong><small>Rover Base</small>
         </div>
-        <div className={`map-node wha-node ${currentWaypoint === "wh-a" ? "current" : ""}`}>
-          <span>▣</span><strong>WH-A</strong><small>Food Supplies</small>
+        <div className={`map-node food-node ${currentWaypoint === "food" ? "current" : ""}`}>
+          <span>▣</span><strong>FOOD</strong><small>Food Supplies</small>
         </div>
-        <div className={`map-node whb-node ${currentWaypoint === "wh-b" ? "current" : ""}`}>
-          <span>✚</span><strong>WH-B</strong><small>Medicine</small>
+        <div className={`map-node medicine-node ${currentWaypoint === "medicine" ? "current" : ""}`}>
+          <span>✚</span><strong>MEDICINE</strong><small>Medicine</small>
         </div>
-        <div className={`map-node whc-node ${currentWaypoint === "wh-c" ? "current" : ""}`}>
-          <span>O₂</span><strong>WH-C</strong><small>Oxygen</small>
+        <div className={`map-node oxygen-node ${currentWaypoint === "oxygen" ? "current" : ""}`}>
+          <span>O₂</span><strong>OXYGEN</strong><small>Oxygen</small>
         </div>
         <div className={`map-node habitat-node ${currentWaypoint === "habitat" ? "current" : ""} ${habitatDelivered ? "success" : ""}`}>
           <span>▥</span><strong>HABITAT</strong><small>Mars Habitat</small>

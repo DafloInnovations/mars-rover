@@ -1,12 +1,17 @@
 # Mission to Mars 2050 — Su-Par1
 
 Professional ESP32 firmware for the **Su-Par1** two-wheel differential-drive
-rover. Firmware v0.9 adds Wi-Fi and MQTT mission dispatch while preserving
-SG90 servo, RC522 RFID, BFD-1000 line-sensor, hardware self-test, mission, and
-direct serial motor commands.
+rover. Firmware v0.9 adds Wi-Fi, MQTT mission dispatch, autonomous 3-channel
+line following, and RFID checkpoint mission stops while preserving SG90 servo,
+RC522 RFID diagnostics, hardware self-test, and direct serial motor commands.
 
-The servo, RFID, and line sensor are diagnostic-only and do not alter mission
-behavior. Amazon Bedrock is not implemented.
+Su-Par1 currently uses a straight-line checkpoint layout:
+
+```text
+BASE → FOOD → MEDICINE → OXYGEN → HABITAT
+```
+
+Amazon Bedrock is implemented in Mission Control, not in ESP32 firmware.
 
 ## Project structure
 
@@ -97,16 +102,16 @@ Commands are newline-delimited and accepted at 115200 baud:
 | `SERVO_CLOSE` | Move the SG90 cargo servo to 0 degrees |
 | `SERVO_TEST` | Open, wait one second, then close |
 | `SELF_TEST` | Run the combined motor, line, RFID, and servo diagnostic |
-| `MISSION_1` | Forward for 2 seconds, then stop |
-| `MISSION_2` | Forward for 2 seconds, left for 1 second, then stop |
-| `MISSION_3` | Forward for 2 seconds, right for 1 second, then stop |
-| `MISSION_4` | Forward 1 second, left 1 second, forward 1 second, then stop |
-| `MISSION_5` | Backward for 2 seconds, then stop |
+| `MISSION_1` | Follow the line until the FOOD RFID checkpoint |
+| `MISSION_2` | Follow the line until the MEDICINE RFID checkpoint |
+| `MISSION_3` | Follow the line until the OXYGEN RFID checkpoint |
+| `MISSION_4` | Follow the line until the HABITAT RFID checkpoint |
+| `MISSION_5` | Follow the line until the BASE RFID checkpoint |
 
 Valid commands return `ACK:<COMMAND>`. Unknown commands return
 `ERR:UNKNOWN_COMMAND`. Input is case-insensitive and accepts either LF or CRLF
-line endings. Mission commands additionally emit `MISSION_START` and
-`MISSION_COMPLETE` lifecycle events.
+line endings. Mission commands additionally emit `MISSION_START`, RFID
+checkpoint, and `MISSION_COMPLETE` lifecycle events.
 
 Example session:
 
@@ -131,13 +136,18 @@ The rover does not move automatically after boot.
 
 ## Mission command examples
 
-Mission commands are acknowledged before movement begins. Completion is
-reported only after the rover has stopped:
+Mission commands are acknowledged before line following begins. Completion is
+reported only after the target RFID checkpoint is detected and the rover has
+stopped:
 
 ```text
 MISSION_2
 ACK:MISSION_2
 MISSION_START:MISSION_2
+TARGET_CHECKPOINT:MEDICINE
+RFID_CHECKPOINT:FOOD
+CONTINUE_TO:MEDICINE
+RFID_CHECKPOINT:MEDICINE
 MISSION_COMPLETE:MISSION_2
 ```
 
@@ -145,12 +155,14 @@ MISSION_COMPLETE:MISSION_2
 MISSION_5
 ACK:MISSION_5
 MISSION_START:MISSION_5
+TARGET_CHECKPOINT:BASE
+RFID_CHECKPOINT:BASE
 MISSION_COMPLETE:MISSION_5
 ```
 
-These movement sequences are deterministic simulations for Mission Control
-integration. They do not perform route planning, obstacle detection, or
-location verification.
+These missions use the straight black line and RFID checkpoint matching only.
+They do not perform junction routing, obstacle detection, or map-based route
+planning.
 
 ## Wi-Fi and MQTT configuration
 
@@ -200,11 +212,19 @@ The rover publishes status JSON every 2 seconds:
 ```json
 {
   "rover_id": "supar1",
-  "status": "online",
   "firmware": "v0.9",
-  "mode": "mqtt",
-  "current_mission": "none",
-  "location": "base"
+  "mission": "MISSION_3",
+  "state": "RUNNING",
+  "location": "BASE",
+  "battery": 87,
+  "wifi_rssi": -45,
+  "uptime": 120,
+  "line": "ON_TRACK",
+  "line_follow": "enabled",
+  "line_state": "CENTER",
+  "rfid": "NONE",
+  "servo": "CLOSED",
+  "timestamp": 120
 }
 ```
 
@@ -234,7 +254,7 @@ SELF_TEST
 
 When MQTT commands are received, the firmware executes the same normalized
 command path used by the Serial Monitor. Supported commands, ACK behavior, and
-mission movement sequences remain the same as Serial command mode. MQTT ACK,
+RFID checkpoint mission behavior remain the same as Serial command mode. MQTT ACK,
 mission lifecycle, boot, Wi-Fi, MQTT, and error events are published to
 `mars/supar1/log`.
 
@@ -287,13 +307,14 @@ The line follower samples the left, center, and right digital channels every
 | `L=0,C=1,R=0` | Line centered | Forward | `LINE:FOLLOWING_CENTER` |
 | `L=1,C=1,R=0` or `L=1,C=0,R=0` | Line is left | Correct left | `LINE:CORRECT_LEFT` |
 | `L=0,C=1,R=1` or `L=0,C=0,R=1` | Line is right | Correct right | `LINE:CORRECT_RIGHT` |
-| `L=1,C=1,R=1` | Junction | Stop briefly for 300 ms | `LINE:JUNCTION` |
+| `L=1,C=1,R=1` | Wide line/checkpoint area | Continue forward | `LINE:JUNCTION` |
 | `L=0,C=0,R=0` | Line lost | Stop | `LINE:LOST` |
 
 `LINE_FOLLOW_START` keeps autonomous following enabled until
-`LINE_FOLLOW_STOP`, `STOP`, a manual motor command, diagnostics, or a mission
-takes control. `LINE_FOLLOW_TEST` runs the same follower for 20 seconds and
-then stops automatically.
+`LINE_FOLLOW_STOP`, `STOP`, a manual motor command, or diagnostics take
+control. `LINE_FOLLOW_TEST` runs the same follower for 20 seconds and then
+stops automatically. Mission commands automatically enable line following and
+use RFID checkpoints to decide when to stop.
 
 MQTT status includes:
 
@@ -315,8 +336,7 @@ LINE:L=0,C=1,R=1
 LINE_TEST_COMPLETE
 ```
 
-This diagnostic does not steer the rover or modify any `MISSION_1` through
-`MISSION_5` movement sequence.
+This diagnostic does not steer the rover or modify any active mission.
 
 ## RC522 wiring
 
@@ -348,14 +368,74 @@ scans for newly presented RC522-compatible cards or tags for 20 seconds:
 ```text
 RFID_TEST
 ACK:RFID_TEST
-RFID:UID=04A1B2C3D4
-RFID:UID=7F82A910
+RFID:UID=5371C0FF220001,CHECKPOINT=BASE
+RFID:UID=5372C0FF220001,CHECKPOINT=FOOD
+RFID:UID=04A1B2C3D4,CHECKPOINT=UNKNOWN
 RFID_TEST_COMPLETE
 ```
 
-UIDs are printed as uppercase hexadecimal without separators. Presenting a tag
-again after removing it allows it to be detected again. RFID values are not
-used by `MISSION_1` through `MISSION_5` in v0.9.
+UIDs are normalized before comparison by removing spaces, removing colons, and
+forcing uppercase. Presenting a tag again after removing it allows it to be
+detected again.
+
+## Straight-line RFID checkpoint missions
+
+The physical course is one black line with RFID checkpoints in this order:
+
+```text
+BASE → FOOD → MEDICINE → OXYGEN → HABITAT
+```
+
+Mission commands map to target checkpoints:
+
+| Mission | Target checkpoint |
+|---|---|
+| `MISSION_1` | `FOOD` |
+| `MISSION_2` | `MEDICINE` |
+| `MISSION_3` | `OXYGEN` |
+| `MISSION_4` | `HABITAT` |
+| `MISSION_5` | `BASE` |
+
+When a mission starts, Su-Par1 sets the target checkpoint, enables autonomous
+line following, and scans RFID while moving. If a checkpoint is detected before
+the target, the rover logs it and continues:
+
+```text
+RFID_CHECKPOINT:FOOD
+CONTINUE_TO:OXYGEN
+```
+
+When the detected checkpoint matches the target, Su-Par1 stops, disables line
+following, publishes an `IDLE` status with `location` set to the checkpoint, and
+prints:
+
+```text
+RFID_CHECKPOINT:OXYGEN
+MISSION_COMPLETE:MISSION_3
+```
+
+Checkpoint UIDs are configured in `firmware/main.cpp`:
+
+| Checkpoint | UID |
+|---|---|
+| `BASE` | `5371C0FF220001` |
+| `FOOD` | `5372C0FF220001` |
+| `MEDICINE` | `536BC0FF220001` |
+| `OXYGEN` | `5368C0FF220001` |
+| `HABITAT` | `5369C0FF220001` |
+
+Unmapped tags report `CHECKPOINT=UNKNOWN` during `RFID_TEST` and
+`RFID_CHECKPOINT:UNKNOWN` during line-following missions. Unknown tags do not
+stop the rover unless the active mission target is also `UNKNOWN`, which normal
+mission commands never set.
+
+Recommended test sequence:
+
+1. Run `LINE_TEST` and confirm `LINE:L=0,C=1,R=0` when centered over the line.
+2. Run `LINE_FOLLOW_TEST` with the wheels lifted or the rover on a safe test
+   track.
+3. Run `RFID_TEST` and confirm each tag reports the expected checkpoint.
+4. Upload firmware and send one mission command, such as `MISSION_3`.
 
 ## SG90 servo wiring
 
