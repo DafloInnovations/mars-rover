@@ -4,10 +4,7 @@
 #include <Arduino.h>
 
 /**
- * @brief Three-channel normalized black-detection reading.
- *
- * A value of 1 means that channel is currently detecting black, regardless of
- * whether the physical sensor module drives LOW or HIGH for black.
+ * @brief Three-channel digital reading returned by the line sensor.
  */
 struct LineSensorReadings {
   uint8_t left;
@@ -45,7 +42,7 @@ class LineSensor {
   /**
    * @brief Samples all three digital sensor channels.
    *
-   * @return Snapshot containing normalized readings where 1 means black detected.
+   * @return Snapshot containing normalized zero-or-one readings.
    */
   LineSensorReadings read() const;
 

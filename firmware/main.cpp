@@ -22,7 +22,7 @@ constexpr uint8_t kIn4Pin = 14;
 constexpr uint8_t kLineSensorLeftPin = 32;
 constexpr uint8_t kLineSensorCenterPin = 33;
 constexpr uint8_t kLineSensorRightPin = 21;
-constexpr uint8_t kLineSensorBlackState = LOW;
+constexpr uint8_t kLineSensorBlackState = HIGH;
 
 // RC522 SPI wiring. The reader must be powered from 3.3 V only.
 constexpr uint8_t kRfidSsPin = 5;

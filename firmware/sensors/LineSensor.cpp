@@ -20,13 +20,13 @@ void LineSensor::begin() {
 }
 
 /**
- * @brief Captures one coherent snapshot of black-detection states.
+ * @brief Captures one coherent snapshot of all line-sensor channels.
  */
 LineSensorReadings LineSensor::read() const {
   return {
-      static_cast<uint8_t>(digitalRead(leftPin_) == blackState_),
-      static_cast<uint8_t>(digitalRead(centerPin_) == blackState_),
-      static_cast<uint8_t>(digitalRead(rightPin_) == blackState_),
+      static_cast<uint8_t>(digitalRead(leftPin_) == HIGH),
+      static_cast<uint8_t>(digitalRead(centerPin_) == HIGH),
+      static_cast<uint8_t>(digitalRead(rightPin_) == HIGH),
   };
 }
 
@@ -49,10 +49,12 @@ void LineSensor::printReadings() const {
  */
 bool LineSensor::isJunction() const {
   const LineSensorReadings readings = read();
+  const uint8_t normalizedBlackState =
+      static_cast<uint8_t>(blackState_ == HIGH);
 
-  return readings.left == 1 &&
-         readings.center == 1 &&
-         readings.right == 1;
+  return readings.left == normalizedBlackState &&
+         readings.center == normalizedBlackState &&
+         readings.right == normalizedBlackState;
 }
 
 /**
