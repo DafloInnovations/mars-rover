@@ -316,11 +316,11 @@ Connect the BFD-1000 middle three digital outputs to the ESP32 as follows:
 The firmware uses plain `INPUT` mode and expects the line sensor module to
 drive each digital channel.
 
-The current configuration treats digital `1` (`HIGH`) as black. Verify this
-with the actual module before autonomous line-following work; if its comparator
-polarity is reversed, change `kLineSensorBlackState` in `firmware/main.cpp` to
-`LOW`. `LineSensor::isJunction()` returns true only when all three channels
-equal the configured black state.
+The current configuration treats digital `0` (`LOW`) as black because the
+verified sensor output is `HIGH` on a white background. `LineSensor::read()`
+normalizes the physical signal so `1` always means “black detected” in logs and
+line-following logic. `LineSensor::isJunction()` returns true only when all
+three normalized channels are `1`.
 
 ## Autonomous line-following commands
 
@@ -332,7 +332,7 @@ The line follower samples the left, center, and right digital channels every
 | `L=0,C=1,R=0` | Line centered | Forward | `LINE:FOLLOWING_CENTER` |
 | `L=1,C=1,R=0` or `L=1,C=0,R=0` | Line is left | Correct left | `LINE:CORRECT_LEFT` |
 | `L=0,C=1,R=1` or `L=0,C=0,R=1` | Line is right | Correct right | `LINE:CORRECT_RIGHT` |
-| `L=1,C=1,R=1` | Wide line/checkpoint area | Continue forward | `LINE:JUNCTION` |
+| `L=1,C=1,R=1` | Wide line/checkpoint area | Slow checkpoint approach | `LINE:JUNCTION` |
 | `L=0,C=0,R=0` | Line lost | Stop | `LINE:LOST` |
 
 `LINE_FOLLOW_START` keeps autonomous following enabled until
@@ -340,6 +340,20 @@ The line follower samples the left, center, and right digital channels every
 control. `LINE_FOLLOW_TEST` runs the same follower for 20 seconds and then
 stops automatically. Mission commands automatically enable line following and
 use RFID checkpoints to decide when to stop.
+
+Autonomous line-following uses reduced PWM speeds so the RC522 has more time
+to read checkpoint stickers:
+
+| Constant | Value | Purpose |
+|---|---:|---|
+| `LINE_FOLLOW_SPEED` | `130` | Normal forward/reverse line following |
+| `LINE_CORRECTION_SPEED` | `110` | Left/right line corrections |
+| `RFID_APPROACH_SPEED` | `90` | Slow movement over wide/checkpoint zones |
+
+Manual `FORWARD`, `BACKWARD`, `LEFT`, and `RIGHT` commands still use full-speed
+motor drive. When all three sensors detect black, Su-Par1 slows to
+`RFID_APPROACH_SPEED` and keeps scanning RFID for roughly 1.5 seconds without
+blocking MQTT or serial command handling.
 
 MQTT status includes:
 
@@ -402,6 +416,10 @@ RFID_TEST_COMPLETE
 UIDs are normalized before comparison by removing spaces, removing colons, and
 forcing uppercase. Presenting a tag again after removing it allows it to be
 detected again.
+
+The firmware suppresses duplicate RFID reports from the same UID/checkpoint for
+two seconds. This keeps the serial monitor and MQTT logs readable while the
+rover is passing over a row of stickers.
 
 ## Straight-line RFID checkpoint missions
 
@@ -471,15 +489,22 @@ MQTT status includes mission/cargo fields:
 - `current_checkpoint`
 - `location`
 
-Checkpoint UIDs are configured in `firmware/main.cpp`:
+Checkpoint UIDs are configured in `firmware/main.cpp`. Each checkpoint supports
+up to three sticker UIDs; the second and third slots are placeholders until
+additional stickers are measured with `RFID_TEST`.
 
-| Checkpoint | UID |
-|---|---|
-| `BASE` | `5371C0FF220001` |
-| `FOOD` | `5372C0FF220001` |
-| `MEDICINE` | `536BC0FF220001` |
-| `OXYGEN` | `5368C0FF220001` |
-| `HABITAT` | `5369C0FF220001` |
+| Checkpoint | Primary UID | Additional UID placeholders |
+|---|---|---|
+| `BASE` | `5371C0FF220001` | `BASE_UID_2`, `BASE_UID_3` |
+| `FOOD` | `5372C0FF220001` | `FOOD_UID_2`, `FOOD_UID_3` |
+| `MEDICINE` | `536BC0FF220001` | `MEDICINE_UID_2`, `MEDICINE_UID_3` |
+| `OXYGEN` | `5368C0FF220001` | `OXYGEN_UID_2`, `OXYGEN_UID_3` |
+| `HABITAT` | `5369C0FF220001` | `HABITAT_UID_2`, `HABITAT_UID_3` |
+
+For better reliability, place two or three RFID stickers for each checkpoint in
+a short row along the black line. Add the measured UIDs to the matching
+checkpoint array in `firmware/main.cpp`, then rerun `RFID_TEST` to confirm
+every sticker maps to the same checkpoint.
 
 Unmapped tags report `CHECKPOINT=UNKNOWN` during `RFID_TEST` and
 `RFID_CHECKPOINT:UNKNOWN` during line-following missions. Unknown tags do not
