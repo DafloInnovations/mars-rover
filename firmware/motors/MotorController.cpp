@@ -1,9 +1,9 @@
 #include "MotorController.h"
 
 namespace {
-// Reduce motor power to ~30% of full output (70% reduction) while preserving
+// Reduce motor power to ~55% of full output (45% reduction) while preserving
 // the existing forward/backward/left/right command behavior.
-constexpr uint8_t kMotorPwmDuty = 76;
+constexpr uint8_t kMotorPwmDuty = 140;
 }
 
 /**
