@@ -107,8 +107,10 @@ enum MissionPhase {
   MISSION_PHASE_GOING_TO_PICKUP,
   MISSION_PHASE_PICKUP_PAUSE,
   MISSION_PHASE_GOING_TO_DELIVERY,
+  MISSION_PHASE_GOING_TO_HABITAT,
   MISSION_PHASE_DELIVERED,
   MISSION_PHASE_RETURNING_BASE,
+  MISSION_PHASE_COMPLETE,
 };
 
 enum NavigationDirection {
@@ -242,10 +244,14 @@ const char* missionPhaseName(const MissionPhase phase) {
       return "PICKUP_PAUSE";
     case MISSION_PHASE_GOING_TO_DELIVERY:
       return "GOING_TO_DELIVERY";
+    case MISSION_PHASE_GOING_TO_HABITAT:
+      return "GOING_TO_HABITAT";
     case MISSION_PHASE_DELIVERED:
       return "DELIVERED";
     case MISSION_PHASE_RETURNING_BASE:
       return "RETURNING_BASE";
+    case MISSION_PHASE_COMPLETE:
+      return "COMPLETE";
     case MISSION_PHASE_IDLE:
     default:
       return "IDLE";
@@ -704,6 +710,28 @@ void completePickupAtCheckpoint(const char* checkpoint) {
 }
 
 /**
+ * @brief Applies the current mission movement direction and logs it once per direction change.
+ */
+void applyMissionMovementDirection(const NavigationDirection requestedDirection) {
+  if (navigationDirection != requestedDirection) {
+    navigationDirection = requestedDirection;
+    if (requestedDirection == NAVIGATION_REVERSE_ROUTE) {
+      Serial.println("MISSION_MOVE_BACKWARD");
+      publishLog("MISSION_MOVE_BACKWARD");
+    } else {
+      Serial.println("MISSION_MOVE_FORWARD");
+      publishLog("MISSION_MOVE_FORWARD");
+    }
+  }
+
+  if (requestedDirection == NAVIGATION_REVERSE_ROUTE) {
+    motorController.backward();
+  } else {
+    motorController.forward();
+  }
+}
+
+/**
  * @brief Completes the active RFID checkpoint mission at the delivery target.
  */
 void completeMissionAtCheckpoint(const char* checkpoint) {
@@ -711,7 +739,7 @@ void completeMissionAtCheckpoint(const char* checkpoint) {
   lineFollowEnabled = false;
   lineFollowTestActive = false;
   missionNavigationActive = false;
-  missionPhase = MISSION_PHASE_DELIVERED;
+  missionPhase = MISSION_PHASE_COMPLETE;
   lineFollowPausedUntilMs = 0;
   rfidApproachUntilMs = 0;
   setCurrentCheckpoint(checkpoint);
@@ -732,6 +760,18 @@ void completeMissionAtCheckpoint(const char* checkpoint) {
   Serial.print("MISSION_COMPLETE:");
   Serial.println(currentMission);
   publishCommandLog("MISSION_COMPLETE:", currentMission);
+
+  if (strcmp(currentMission, "MISSION_5") == 0 || strcmp(currentMission, "RETURN_BASE") == 0) {
+    Serial.println("RETURN_BASE_COMPLETE");
+    publishLog("RETURN_BASE_COMPLETE");
+  } else {
+    Serial.print("DELIVERED:");
+    Serial.println(currentCargo);
+    char deliveredLog[48] = {};
+    snprintf(deliveredLog, sizeof(deliveredLog), "DELIVERED:%s", currentCargo);
+    publishLog(deliveredLog);
+  }
+
   publishRoverStatus();
 }
 
@@ -749,25 +789,41 @@ void updateMissionPickupPause(const unsigned long now) {
   }
 
   lineFollowPausedUntilMs = 0;
-  missionPhase = MISSION_PHASE_GOING_TO_DELIVERY;
-  setTargetCheckpoint(deliveryCheckpoint);
-  updateNavigationDirectionForTarget(deliveryCheckpoint);
+  missionPhase = MISSION_PHASE_GOING_TO_HABITAT;
+  setTargetCheckpoint(kCheckpointHabitat);
+  navigationDirection = NAVIGATION_FORWARD_ROUTE;
   setRoverState("RUNNING");
   publishRoverStatus();
 }
 
 /**
- * @brief Checks for RFID checkpoints while autonomous line following is active.
+ * @brief Drives the rover by RFID checkpoints only while a mission is active.
  */
-void scanRfidCheckpointDuringLineFollow(const unsigned long now) {
-  if (!rfidReader.isInitialized() ||
-      missionPhase == MISSION_PHASE_PICKUP_PAUSE ||
-      now - lastLineFollowRfidScanMs < kRfidScanIntervalMs) {
+void updateMissionNavigation(const unsigned long now) {
+  if (!missionNavigationActive || !rfidReader.isInitialized()) {
+    return;
+  }
+
+  if (now - lastLineFollowRfidScanMs < kRfidScanIntervalMs) {
     return;
   }
   lastLineFollowRfidScanMs = now;
 
   if (!rfidReader.isCardPresent()) {
+    if (missionPhase == MISSION_PHASE_PICKUP_PAUSE) {
+      updateMissionPickupPause(now);
+      return;
+    }
+
+    if (missionPhase == MISSION_PHASE_GOING_TO_PICKUP ||
+        missionPhase == MISSION_PHASE_GOING_TO_DELIVERY ||
+        missionPhase == MISSION_PHASE_GOING_TO_HABITAT ||
+        missionPhase == MISSION_PHASE_RETURNING_BASE) {
+      const NavigationDirection requestedDirection =
+          missionPhase == MISSION_PHASE_RETURNING_BASE ? NAVIGATION_REVERSE_ROUTE
+                                                      : NAVIGATION_FORWARD_ROUTE;
+      applyMissionMovementDirection(requestedDirection);
+    }
     return;
   }
 
@@ -802,12 +858,18 @@ void scanRfidCheckpointDuringLineFollow(const unsigned long now) {
     return;
   }
 
-  if ((missionPhase == MISSION_PHASE_GOING_TO_DELIVERY ||
+  if ((missionPhase == MISSION_PHASE_GOING_TO_HABITAT ||
+       missionPhase == MISSION_PHASE_GOING_TO_DELIVERY ||
        missionPhase == MISSION_PHASE_RETURNING_BASE) &&
-      strcmp(checkpoint, deliveryCheckpoint) == 0) {
+      strcmp(checkpoint, targetCheckpoint) == 0) {
     completeMissionAtCheckpoint(checkpoint);
     return;
   }
+
+  const NavigationDirection requestedDirection =
+      missionPhase == MISSION_PHASE_RETURNING_BASE ? NAVIGATION_REVERSE_ROUTE
+                                                  : NAVIGATION_FORWARD_ROUTE;
+  applyMissionMovementDirection(requestedDirection);
 
   Serial.print("CONTINUE_TO:");
   Serial.println(targetCheckpoint);
@@ -1038,17 +1100,24 @@ void runMission(const char* command) {
   if (strcmp(missionCommand, "MISSION_5") == 0) {
     missionPhase = MISSION_PHASE_RETURNING_BASE;
     setTargetCheckpoint(deliveryCheckpoint);
+    navigationDirection = NAVIGATION_REVERSE_ROUTE;
+  } else if (strcmp(command, "MISSION_4") == 0) {
+    missionPhase = MISSION_PHASE_GOING_TO_HABITAT;
+    setTargetCheckpoint(kCheckpointHabitat);
+    navigationDirection = NAVIGATION_FORWARD_ROUTE;
   } else if (strcmp(pickupCheckpoint, "NONE") == 0) {
-    missionPhase = MISSION_PHASE_GOING_TO_DELIVERY;
-    setTargetCheckpoint(deliveryCheckpoint);
+    missionPhase = MISSION_PHASE_GOING_TO_HABITAT;
+    setTargetCheckpoint(kCheckpointHabitat);
+    navigationDirection = NAVIGATION_FORWARD_ROUTE;
   } else {
     missionPhase = MISSION_PHASE_GOING_TO_PICKUP;
     setTargetCheckpoint(pickupCheckpoint);
+    navigationDirection = NAVIGATION_FORWARD_ROUTE;
   }
   const bool alreadyAtTarget = updateNavigationDirectionForTarget(targetCheckpoint);
 
   missionNavigationActive = true;
-  lineFollowEnabled = true;
+  lineFollowEnabled = false;
   lineFollowTestActive = false;
   lineFollowTestStartedAt = 0;
   lastLineFollowUpdateMs = 0;
@@ -1064,7 +1133,7 @@ void runMission(const char* command) {
   Serial.print("TARGET_CHECKPOINT:");
   Serial.println(targetCheckpoint);
   publishCommandLog("MISSION_START:", missionCommand);
-  publishLog("LINE_FOLLOW_STARTED");
+  publishLog("MISSION_NAVIGATION_STARTED");
   publishRoverStatus();
 
   if (alreadyAtTarget) {
@@ -1391,7 +1460,8 @@ void publishRoverStatus() {
            sizeof(statusPayload),
            "{\"rover_id\":\"%s\",\"firmware\":\"v0.9\",\"mission\":\"%s\","
            "\"mission_phase\":\"%s\",\"mission_complete\":%s,"
-           "\"navigation_direction\":\"%s\","
+           "\"navigation_direction\":\"%s\",\"movement_direction\":\"%s\","
+           "\"line_navigation_enabled\":false,"
            "\"state\":\"%s\",\"location\":\"%s\","
            "\"cargo\":\"%s\",\"cargo_status\":\"%s\","
            "\"pickup_checkpoint\":\"%s\",\"delivery_checkpoint\":\"%s\","
@@ -1403,7 +1473,10 @@ void publishRoverStatus() {
            ROVER_ID,
            currentMission,
            missionPhaseName(missionPhase),
-           missionPhase == MISSION_PHASE_DELIVERED ? "true" : "false",
+           missionPhase == MISSION_PHASE_DELIVERED || missionPhase == MISSION_PHASE_COMPLETE
+               ? "true"
+               : "false",
+           navigationDirectionName(navigationDirection),
            navigationDirectionName(navigationDirection),
            roverState,
            roverLocation,
@@ -1552,5 +1625,9 @@ void loop() {
   processNetwork();
   processSerialInput();
   processMqttCommand();
-  updateLineFollower();
+  if (missionNavigationActive) {
+    updateMissionNavigation(millis());
+  } else {
+    updateLineFollower();
+  }
 }

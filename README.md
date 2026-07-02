@@ -1,8 +1,8 @@
 # Mission to Mars 2050 — Su-Par1
 
 Professional ESP32 firmware for the **Su-Par1** two-wheel differential-drive
-rover. Firmware v0.9 adds Wi-Fi, MQTT mission dispatch, autonomous 3-channel
-line following, and RFID checkpoint mission stops while preserving SG90 servo,
+rover. Firmware v0.9 adds Wi-Fi, MQTT mission dispatch, RFID-only straight-line
+mission navigation, and RFID checkpoint mission stops while preserving SG90 servo,
 RC522 RFID diagnostics, hardware self-test, and direct serial motor commands.
 
 Su-Par1 currently uses a straight-line checkpoint layout:
@@ -21,15 +21,13 @@ Checkpoint order is fixed:
 | `OXYGEN` | 3 |
 | `HABITAT` | 4 |
 
-Navigation direction is selected from the current checkpoint and active target:
+Navigation direction is selected from the mission phase and active target:
 
-- `FORWARD_ROUTE` when target index is greater than current index
-- `REVERSE_ROUTE` when target index is less than current index
-- immediate stop/completion handling when target index equals current index
+- `FORWARD_ROUTE` for delivery and habitat missions
+- `REVERSE_ROUTE` for `MISSION_5` / `RETURN_BASE`
+- immediate stop/completion handling when the current RFID checkpoint matches the target
 
-`MISSION_5` and `RETURN_BASE` use `REVERSE_ROUTE` when the rover is at FOOD,
-MEDICINE, OXYGEN, or HABITAT. In reverse route mode, centered line readings use
-`motorController.backward()` and left/right corrections are inverted.
+`MISSION_5` and `RETURN_BASE` drive backward until the BASE RFID checkpoint is detected.
 
 Amazon Bedrock is implemented in Mission Control, not in ESP32 firmware.
 
@@ -113,10 +111,10 @@ Commands are newline-delimited and accepted at 115200 baud:
 | `RIGHT` | Pivot right |
 | `STOP` | Stop both motors |
 | `TEST` | Run the legacy v0.2 movement sequence once |
-| `LINE_TEST` | Print left, center, and right line channels every 300 ms for 20 seconds |
-| `LINE_FOLLOW_START` | Enable continuous autonomous 3-channel line following |
-| `LINE_FOLLOW_STOP` | Disable autonomous line following and stop the motors |
-| `LINE_FOLLOW_TEST` | Run autonomous line following for 20 seconds, then stop |
+| `LINE_TEST` | Print left, center, and right line channels every 300 ms for 20 seconds (diagnostic only) |
+| `LINE_FOLLOW_START` | Enable manual line-following mode for diagnostics only |
+| `LINE_FOLLOW_STOP` | Disable manual line-following mode and stop the motors |
+| `LINE_FOLLOW_TEST` | Run manual line-following diagnostics for 20 seconds, then stop |
 | `RFID_TEST` | Scan for RC522 cards and print detected UIDs for 20 seconds |
 | `SERVO_OPEN` | Move the SG90 cargo servo to 90 degrees |
 | `SERVO_CLOSE` | Move the SG90 cargo servo to 0 degrees |
@@ -156,7 +154,7 @@ The rover does not move automatically after boot.
 
 ## Mission command examples
 
-Mission commands are acknowledged before line following begins. Delivery
+Mission commands are acknowledged before RFID-only movement begins. Delivery
 missions stop briefly at the pickup checkpoint, then continue to HABITAT.
 Completion is reported only after the final destination is detected and the
 rover has stopped:
@@ -185,7 +183,7 @@ RFID_CHECKPOINT:BASE
 MISSION_COMPLETE:MISSION_5
 ```
 
-These missions use the straight black line and RFID checkpoint matching only.
+These missions use simple motor direction plus RFID checkpoint matching only.
 They do not perform junction routing, obstacle detection, or map-based route
 planning.
 
@@ -322,10 +320,10 @@ normalizes the physical signal so `1` always means “black detected” in logs 
 line-following logic. `LineSensor::isJunction()` returns true only when all
 three normalized channels are `1`.
 
-## Autonomous line-following commands
+## Line sensor diagnostics
 
-The line follower samples the left, center, and right digital channels every
-40 milliseconds without blocking MQTT or serial command handling.
+The line sensor remains available for diagnostics only. Mission navigation no
+longer depends on line-following logic.
 
 | Reading | Meaning | Motor action | Serial log on state change |
 |---|---|---|---|
@@ -335,11 +333,9 @@ The line follower samples the left, center, and right digital channels every
 | `L=1,C=1,R=1` | Wide line/checkpoint area | Continue forward | `LINE:JUNCTION` |
 | `L=0,C=0,R=0` | Line lost | Stop | `LINE:LOST` |
 
-`LINE_FOLLOW_START` keeps autonomous following enabled until
-`LINE_FOLLOW_STOP`, `STOP`, a manual motor command, or diagnostics take
-control. `LINE_FOLLOW_TEST` runs the same follower for 20 seconds and then
-stops automatically. Mission commands automatically enable line following and
-use RFID checkpoints to decide when to stop.
+`LINE_FOLLOW_START`, `LINE_FOLLOW_STOP`, and `LINE_FOLLOW_TEST` are manual or
+diagnostic-only commands. Mission commands do not enable or depend on line
+following; they use RFID checkpoints to decide when to stop.
 
 MQTT status includes:
 
@@ -409,7 +405,7 @@ rover is passing over a row of stickers.
 
 ## Straight-line RFID checkpoint missions
 
-The physical course is one black line with RFID checkpoints in this order:
+The physical course is a straight lane with RFID checkpoints in this order:
 
 ```text
 BASE → FOOD → MEDICINE → OXYGEN → HABITAT
@@ -432,12 +428,14 @@ Mission phases published in MQTT status are:
 - `GOING_TO_PICKUP`
 - `PICKUP_PAUSE`
 - `GOING_TO_DELIVERY`
+- `GOING_TO_HABITAT`
 - `DELIVERED`
 - `RETURNING_BASE`
+- `COMPLETE`
 
-When a mission starts, Su-Par1 sets the pickup/delivery checkpoints, enables
-autonomous line following, and scans RFID while moving. If a checkpoint is
-detected before the active target, the rover logs it and continues:
+When a mission starts, Su-Par1 sets the pickup/delivery checkpoints and scans
+RFID while moving. If a checkpoint is detected before the active target, the
+rover logs it and continues:
 
 ```text
 RFID_CHECKPOINT:FOOD
@@ -446,16 +444,15 @@ CONTINUE_TO:OXYGEN
 
 When the pickup checkpoint is detected, Su-Par1 stops for a one-second
 non-blocking pause, updates `cargo_status`, publishes MQTT status, and resumes
-line following toward HABITAT:
+moving toward HABITAT:
 
 ```text
 RFID_CHECKPOINT:OXYGEN
 PICKUP_COMPLETE:OXYGEN
 ```
 
-When the delivery/destination checkpoint is detected, Su-Par1 stops, disables
-line following, publishes an `IDLE` status with `location` set to the checkpoint,
-and prints:
+When the delivery/destination checkpoint is detected, Su-Par1 stops, publishes
+an `IDLE` status with `location` set to the checkpoint, and prints:
 
 ```text
 RFID_CHECKPOINT:HABITAT
@@ -467,6 +464,8 @@ MQTT status includes mission/cargo fields:
 - `mission_phase`
 - `mission_complete`
 - `navigation_direction`
+- `movement_direction`
+- `line_navigation_enabled`
 - `cargo`
 - `cargo_status`
 - `pickup_checkpoint`
@@ -486,17 +485,15 @@ Checkpoint UIDs are configured in `firmware/main.cpp`:
 | `HABITAT` | `5338C0FF220001` |
 
 Unmapped tags report `CHECKPOINT=UNKNOWN` during `RFID_TEST` and
-`RFID_CHECKPOINT:UNKNOWN` during line-following missions. Unknown tags do not
-stop the rover unless the active mission target is also `UNKNOWN`, which normal
-mission commands never set.
+`RFID_CHECKPOINT:UNKNOWN` during RFID missions. Unknown tags do not stop the
+rover unless the active mission target is also `UNKNOWN`, which normal mission
+commands never set.
 
 Recommended test sequence:
 
-1. Run `LINE_TEST` and confirm `LINE:L=0,C=1,R=0` when centered over the line.
-2. Run `LINE_FOLLOW_TEST` with the wheels lifted or the rover on a safe test
-   track.
-3. Run `RFID_TEST` and confirm each tag reports the expected checkpoint.
-4. Upload firmware and send one mission command, such as `MISSION_3`.
+1. Run `LINE_TEST` and confirm the line-sensor readings are still readable.
+2. Run `RFID_TEST` and confirm each tag reports the expected checkpoint.
+3. Upload firmware and send one mission command, such as `MISSION_3`.
 
 ## SG90 servo wiring
 
