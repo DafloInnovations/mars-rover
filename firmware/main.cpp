@@ -821,10 +821,8 @@ void updateMissionNavigation(const unsigned long now) {
         missionPhase == MISSION_PHASE_GOING_TO_DELIVERY ||
         missionPhase == MISSION_PHASE_GOING_TO_HABITAT ||
         missionPhase == MISSION_PHASE_RETURNING_BASE) {
-      const NavigationDirection requestedDirection =
-          missionPhase == MISSION_PHASE_RETURNING_BASE ? NAVIGATION_REVERSE_ROUTE
-                                                      : NAVIGATION_FORWARD_ROUTE;
-      applyMissionMovementDirection(requestedDirection);
+      updateNavigationDirectionForTarget(targetCheckpoint);
+      applyMissionMovementDirection(navigationDirection);
     }
     return;
   }
@@ -868,10 +866,8 @@ void updateMissionNavigation(const unsigned long now) {
     return;
   }
 
-  const NavigationDirection requestedDirection =
-      missionPhase == MISSION_PHASE_RETURNING_BASE ? NAVIGATION_REVERSE_ROUTE
-                                                  : NAVIGATION_FORWARD_ROUTE;
-  applyMissionMovementDirection(requestedDirection);
+  updateNavigationDirectionForTarget(targetCheckpoint);
+  applyMissionMovementDirection(navigationDirection);
 
   Serial.print("CONTINUE_TO:");
   Serial.println(targetCheckpoint);
