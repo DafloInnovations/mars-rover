@@ -1,5 +1,11 @@
 #include "MotorController.h"
 
+namespace {
+// Reduce motor power to ~30% of full output (70% reduction) while preserving
+// the existing forward/backward/left/right command behavior.
+constexpr uint8_t kMotorPwmDuty = 76;
+}
+
 /**
  * @brief Stores the caller-provided H-bridge GPIO assignments.
  *
@@ -90,8 +96,8 @@ void MotorController::setMotorStates(const uint8_t leftInput1State,
                                      const uint8_t leftInput2State,
                                      const uint8_t rightInput1State,
                                      const uint8_t rightInput2State) {
-  digitalWrite(leftMotorInput1_, leftInput1State);
-  digitalWrite(leftMotorInput2_, leftInput2State);
-  digitalWrite(rightMotorInput1_, rightInput1State);
-  digitalWrite(rightMotorInput2_, rightInput2State);
+  analogWrite(leftMotorInput1_, leftInput1State == LOW ? 0 : kMotorPwmDuty);
+  analogWrite(leftMotorInput2_, leftInput2State == LOW ? 0 : kMotorPwmDuty);
+  analogWrite(rightMotorInput1_, rightInput1State == LOW ? 0 : kMotorPwmDuty);
+  analogWrite(rightMotorInput2_, rightInput2State == LOW ? 0 : kMotorPwmDuty);
 }
