@@ -483,7 +483,9 @@ Checkpoint UIDs are configured in `firmware/main.cpp`:
 | `MEDICINE` | `5339C0FF220001` |
 | `OXYGEN` | `533AC0FF220001` |
 | `HABITAT` | `5338C0FF220001` |
-
+Each checkpoint can support up to three physical RFID tags by populating
+`kUidX2` and `kUidX3` in `firmware/main.cpp`. This makes navigation more
+robust when multiple tags are placed next to each other on the same checkpoint.
 Unmapped tags report `CHECKPOINT=UNKNOWN` during `RFID_TEST` and
 `RFID_CHECKPOINT:UNKNOWN` during RFID missions. Unknown tags do not stop the
 rover unless the active mission target is also `UNKNOWN`, which normal mission

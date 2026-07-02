@@ -71,16 +71,18 @@ constexpr const char* kUidMedicine = "5339C0FF220001";
 constexpr const char* kUidOxygen = "533AC0FF220001";
 constexpr const char* kUidHabitat = "5338C0FF220001";
 // Additional RFID stickers can be added here without changing mission logic.
-constexpr const char* kUidBase2 = "";      // BASE_UID_2
-constexpr const char* kUidBase3 = "";      // BASE_UID_3
-constexpr const char* kUidFood2 = "";      // FOOD_UID_2
-constexpr const char* kUidFood3 = "";      // FOOD_UID_3
-constexpr const char* kUidMedicine2 = "";  // MEDICINE_UID_2
-constexpr const char* kUidMedicine3 = "";  // MEDICINE_UID_3
-constexpr const char* kUidOxygen2 = "";    // OXYGEN_UID_2
-constexpr const char* kUidOxygen3 = "";    // OXYGEN_UID_3
-constexpr const char* kUidHabitat2 = "";   // HABITAT_UID_2
-constexpr const char* kUidHabitat3 = "";   // HABITAT_UID_3
+// Each checkpoint supports up to three UIDs, so multiple tags can be placed
+// next to each other for the same checkpoint.
+constexpr const char* kUidBase2 = "535AC0FF220001";      // BASE UID 2
+constexpr const char* kUidBase3 = "5350C0FF220001";      // BASE UID 3
+constexpr const char* kUidFood2 = "5363C0FF220001";      // FOOD UID 2
+constexpr const char* kUidFood3 = "5358C0FF220001";      // FOOD UID 3
+constexpr const char* kUidMedicine2 = "5351C0FF220001";  // MEDICINE UID 2
+constexpr const char* kUidMedicine3 = "535BC0FF220001";  // MEDICINE UID 3
+constexpr const char* kUidOxygen2 = "5360C0FF220001";    // OXYGEN UID 2
+constexpr const char* kUidOxygen3 = "5359C0FF220001";    // OXYGEN UID 3
+constexpr const char* kUidHabitat2 = "5361C0FF220001";   // HABITAT UID 2
+constexpr const char* kUidHabitat3 = "5362C0FF220001";   // HABITAT UID 3
 constexpr const char* kBaseUids[] = {kUidBase, kUidBase2, kUidBase3};
 constexpr const char* kFoodUids[] = {kUidFood, kUidFood2, kUidFood3};
 constexpr const char* kMedicineUids[] = {kUidMedicine, kUidMedicine2, kUidMedicine3};
