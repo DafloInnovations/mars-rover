@@ -780,9 +780,9 @@ void updateLineFollower() {
     lastLineDirection = LINE_DIR_CENTER;
     setRoverState("MOVING");
     if (navigationDirection == NAVIGATION_REVERSE_ROUTE) {
-      motorController.backward(rfidApproachActive ? RFID_APPROACH_SPEED : LINE_FOLLOW_SPEED);
+      motorController.backward();
     } else {
-      motorController.forward(rfidApproachActive ? RFID_APPROACH_SPEED : LINE_FOLLOW_SPEED);
+      motorController.forward();
     }
   } else if ((leftDetected && centerDetected && !rightDetected) ||
              (leftDetected && !centerDetected && !rightDetected)) {
@@ -790,9 +790,9 @@ void updateLineFollower() {
     lastLineDirection = LINE_DIR_LEFT;
     setRoverState("MOVING");
     if (navigationDirection == NAVIGATION_REVERSE_ROUTE) {
-      motorController.right(LINE_CORRECTION_SPEED);
+      motorController.right();
     } else {
-      motorController.left(LINE_CORRECTION_SPEED);
+      motorController.left();
     }
   } else if ((!leftDetected && centerDetected && rightDetected) ||
              (!leftDetected && !centerDetected && rightDetected)) {
@@ -800,20 +800,17 @@ void updateLineFollower() {
     lastLineDirection = LINE_DIR_RIGHT;
     setRoverState("MOVING");
     if (navigationDirection == NAVIGATION_REVERSE_ROUTE) {
-      motorController.left(LINE_CORRECTION_SPEED);
+      motorController.left();
     } else {
-      motorController.right(LINE_CORRECTION_SPEED);
+      motorController.right();
     }
   } else if (leftDetected && centerDetected && rightDetected) {
     logLineFollowState(LINE_STATE_JUNCTION);
     setRoverState("MOVING");
-    if (now >= rfidApproachUntilMs) {
-      rfidApproachUntilMs = now + kRfidApproachScanDurationMs;
-    }
     if (navigationDirection == NAVIGATION_REVERSE_ROUTE) {
-      motorController.backward(RFID_APPROACH_SPEED);
+      motorController.backward();
     } else {
-      motorController.forward(RFID_APPROACH_SPEED);
+      motorController.forward();
     }
   } else {
     logLineFollowState(LINE_STATE_LOST);
@@ -1032,21 +1029,12 @@ void runRfidTest() {
   disableLineFollowing(true);
   motorController.stop();
   const unsigned long startTime = millis();
-  char testLastUid[24] = "";
-  unsigned long testLastPrintedAtMs = 0;
 
   while (millis() - startTime < kRfidTestDurationMs) {
     if (rfidReader.isCardPresent()) {
       captureLastRfidUid();
       const String detectedUid = rfidReader.readUID();
-      const String normalizedUid = normalizeUid(detectedUid);
-      const unsigned long now = millis();
-      if (now - testLastPrintedAtMs >= kRfidDebounceMs ||
-          strcmp(normalizedUid.c_str(), testLastUid) != 0) {
-        printRfidUidAndCheckpoint(detectedUid, checkpointForUid(detectedUid));
-        normalizedUid.toCharArray(testLastUid, sizeof(testLastUid));
-        testLastPrintedAtMs = now;
-      }
+      printRfidUidAndCheckpoint(detectedUid, checkpointForUid(detectedUid));
     }
     delay(kRfidScanIntervalMs);
   }

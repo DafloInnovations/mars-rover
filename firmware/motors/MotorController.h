@@ -39,23 +39,9 @@ class MotorController {
   void forward();
 
   /**
-   * @brief Drives both motors forward using the requested PWM speed.
-   *
-   * @param speed PWM duty cycle from 0 stopped to 255 full speed.
-   */
-  void forward(uint8_t speed);
-
-  /**
    * @brief Drives both motors backward.
    */
   void backward();
-
-  /**
-   * @brief Drives both motors backward using the requested PWM speed.
-   *
-   * @param speed PWM duty cycle from 0 stopped to 255 full speed.
-   */
-  void backward(uint8_t speed);
 
   /**
    * @brief Pivots the rover left by reversing the left motor and advancing the
@@ -64,24 +50,10 @@ class MotorController {
   void left();
 
   /**
-   * @brief Pivots the rover left using the requested PWM speed.
-   *
-   * @param speed PWM duty cycle from 0 stopped to 255 full speed.
-   */
-  void left(uint8_t speed);
-
-  /**
    * @brief Pivots the rover right by advancing the left motor and reversing the
    * right motor.
    */
   void right();
-
-  /**
-   * @brief Pivots the rover right using the requested PWM speed.
-   *
-   * @param speed PWM duty cycle from 0 stopped to 255 full speed.
-   */
-  void right(uint8_t speed);
 
   /**
    * @brief Stops both motors by driving every H-bridge input LOW.
@@ -106,26 +78,6 @@ class MotorController {
                       uint8_t leftInput2State,
                       uint8_t rightInput1State,
                       uint8_t rightInput2State);
-
-  /**
-   * @brief Applies direction states with PWM on active H-bridge inputs.
-   *
-   * @param leftInput1State  Logic state for left motor input 1.
-   * @param leftInput2State  Logic state for left motor input 2.
-   * @param rightInput1State Logic state for right motor input 1.
-   * @param rightInput2State Logic state for right motor input 2.
-   * @param speed PWM duty cycle from 0 stopped to 255 full speed.
-   */
-  void setMotorStates(uint8_t leftInput1State,
-                      uint8_t leftInput2State,
-                      uint8_t rightInput1State,
-                      uint8_t rightInput2State,
-                      uint8_t speed);
-
-  /**
-   * @brief Writes either LOW or a PWM duty cycle to one H-bridge input pin.
-   */
-  void writeMotorInput(uint8_t pin, uint8_t state, uint8_t speed);
 
   const uint8_t leftMotorInput1_;
   const uint8_t leftMotorInput2_;
