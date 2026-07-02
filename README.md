@@ -407,8 +407,8 @@ scans for newly presented RC522-compatible cards or tags for 20 seconds:
 ```text
 RFID_TEST
 ACK:RFID_TEST
-RFID:UID=5371C0FF220001,CHECKPOINT=BASE
-RFID:UID=5372C0FF220001,CHECKPOINT=FOOD
+RFID:UID=536AC0FF220001,CHECKPOINT=BASE
+RFID:UID=5373C0FF220001,CHECKPOINT=FOOD
 RFID:UID=04A1B2C3D4,CHECKPOINT=UNKNOWN
 RFID_TEST_COMPLETE
 ```
@@ -495,11 +495,11 @@ additional stickers are measured with `RFID_TEST`.
 
 | Checkpoint | Primary UID | Additional UID placeholders |
 |---|---|---|
-| `BASE` | `5371C0FF220001` | `BASE_UID_2`, `BASE_UID_3` |
-| `FOOD` | `5372C0FF220001` | `FOOD_UID_2`, `FOOD_UID_3` |
-| `MEDICINE` | `536BC0FF220001` | `MEDICINE_UID_2`, `MEDICINE_UID_3` |
-| `OXYGEN` | `5368C0FF220001` | `OXYGEN_UID_2`, `OXYGEN_UID_3` |
-| `HABITAT` | `5369C0FF220001` | `HABITAT_UID_2`, `HABITAT_UID_3` |
+| `BASE` | `536AC0FF220001` | `BASE_UID_2`, `BASE_UID_3` |
+| `FOOD` | `5373C0FF220001` | `FOOD_UID_2`, `FOOD_UID_3` |
+| `MEDICINE` | `5339C0FF220001` | `MEDICINE_UID_2`, `MEDICINE_UID_3` |
+| `OXYGEN` | `533AC0FF220001` | `OXYGEN_UID_2`, `OXYGEN_UID_3` |
+| `HABITAT` | `5338C0FF220001` | `HABITAT_UID_2`, `HABITAT_UID_3` |
 
 For better reliability, place two or three RFID stickers for each checkpoint in
 a short row along the black line. Add the measured UIDs to the matching

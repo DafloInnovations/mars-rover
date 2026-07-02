@@ -68,11 +68,11 @@ constexpr const char* kCheckpointMedicine = "MEDICINE";
 constexpr const char* kCheckpointOxygen = "OXYGEN";
 constexpr const char* kCheckpointHabitat = "HABITAT";
 constexpr const char* kCheckpointUnknown = "UNKNOWN";
-constexpr const char* kUidBase = "5371C0FF220001";
-constexpr const char* kUidFood = "5372C0FF220001";
-constexpr const char* kUidMedicine = "536BC0FF220001";
-constexpr const char* kUidOxygen = "5368C0FF220001";
-constexpr const char* kUidHabitat = "5369C0FF220001";
+constexpr const char* kUidBase = "536AC0FF220001";
+constexpr const char* kUidFood = "5373C0FF220001";
+constexpr const char* kUidMedicine = "5339C0FF220001";
+constexpr const char* kUidOxygen = "533AC0FF220001";
+constexpr const char* kUidHabitat = "5338C0FF220001";
 // Additional RFID stickers can be added here without changing mission logic.
 constexpr const char* kUidBase2 = "";      // BASE_UID_2
 constexpr const char* kUidBase3 = "";      // BASE_UID_3
