@@ -45,8 +45,6 @@ constexpr unsigned long kLineTestDurationMs = 20000;
 constexpr unsigned long kLineSampleIntervalMs = 300;
 constexpr unsigned long kLineFollowIntervalMs = 40;
 constexpr unsigned long kLineFollowJunctionPauseMs = 300;
-constexpr unsigned long kRfidApproachScanDurationMs = 1500;
-constexpr unsigned long kRfidDebounceMs = 2000;
 constexpr unsigned long kPickupPauseDurationMs = 1000;
 constexpr unsigned long kLineFollowTestDurationMs = 20000;
 constexpr unsigned long kRfidTestDurationMs = 20000;
@@ -56,9 +54,6 @@ constexpr unsigned long kSelfTestMovementDurationMs = 1000;
 constexpr unsigned long kStatusPublishIntervalMs = 2000;
 constexpr size_t kCommandBufferSize = 32;
 constexpr size_t kMqttCommandBufferSize = 64;
-constexpr uint8_t LINE_FOLLOW_SPEED = 130;
-constexpr uint8_t LINE_CORRECTION_SPEED = 110;
-constexpr uint8_t RFID_APPROACH_SPEED = 90;
 
 // Straight-line RFID checkpoint navigation:
 // BASE -> FOOD -> MEDICINE -> OXYGEN -> HABITAT.
@@ -73,22 +68,6 @@ constexpr const char* kUidFood = "5373C0FF220001";
 constexpr const char* kUidMedicine = "5339C0FF220001";
 constexpr const char* kUidOxygen = "533AC0FF220001";
 constexpr const char* kUidHabitat = "5338C0FF220001";
-// Additional RFID stickers can be added here without changing mission logic.
-constexpr const char* kUidBase2 = "";      // BASE_UID_2
-constexpr const char* kUidBase3 = "";      // BASE_UID_3
-constexpr const char* kUidFood2 = "";      // FOOD_UID_2
-constexpr const char* kUidFood3 = "";      // FOOD_UID_3
-constexpr const char* kUidMedicine2 = "";  // MEDICINE_UID_2
-constexpr const char* kUidMedicine3 = "";  // MEDICINE_UID_3
-constexpr const char* kUidOxygen2 = "";    // OXYGEN_UID_2
-constexpr const char* kUidOxygen3 = "";    // OXYGEN_UID_3
-constexpr const char* kUidHabitat2 = "";   // HABITAT_UID_2
-constexpr const char* kUidHabitat3 = "";   // HABITAT_UID_3
-constexpr const char* kBaseUids[] = {kUidBase, kUidBase2, kUidBase3};
-constexpr const char* kFoodUids[] = {kUidFood, kUidFood2, kUidFood3};
-constexpr const char* kMedicineUids[] = {kUidMedicine, kUidMedicine2, kUidMedicine3};
-constexpr const char* kOxygenUids[] = {kUidOxygen, kUidOxygen2, kUidOxygen3};
-constexpr const char* kHabitatUids[] = {kUidHabitat, kUidHabitat2, kUidHabitat3};
 
 enum LastLineDirection {
   LINE_DIR_CENTER,
@@ -166,14 +145,10 @@ unsigned long lineFollowTestStartedAt = 0;
 unsigned long lastLineFollowUpdateMs = 0;
 unsigned long lastLineFollowRfidScanMs = 0;
 unsigned long lineFollowPausedUntilMs = 0;
-unsigned long rfidApproachUntilMs = 0;
-unsigned long lastRfidAcceptedAtMs = 0;
 LastLineDirection lastLineDirection = LINE_DIR_CENTER;
 LineFollowState currentLineFollowState = LINE_STATE_UNKNOWN;
 MissionPhase missionPhase = MISSION_PHASE_IDLE;
 NavigationDirection navigationDirection = NAVIGATION_FORWARD_ROUTE;
-char lastProcessedRfidUid[24] = "";
-char lastProcessedCheckpoint[12] = "";
 
 void publishRoverStatus();
 
@@ -299,44 +274,25 @@ bool uidMatches(const String& observedUid, const char* configuredUid) {
 }
 
 /**
- * @brief Compares an observed RFID UID against every UID assigned to a checkpoint.
- */
-bool uidMatchesAny(const String& observedUid,
-                   const char* const configuredUids[],
-                   const size_t configuredUidCount) {
-  for (size_t index = 0; index < configuredUidCount; ++index) {
-    if (uidMatches(observedUid, configuredUids[index])) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-/**
  * @brief Maps an RFID UID to a named straight-line checkpoint.
  *
  * Unknown or placeholder UID mappings intentionally return UNKNOWN so the rover
  * can keep driving without crashing while tags are being commissioned.
  */
 const char* checkpointForUid(const String& uid) {
-  if (uidMatchesAny(uid, kBaseUids, sizeof(kBaseUids) / sizeof(kBaseUids[0]))) {
+  if (uidMatches(uid, kUidBase)) {
     return kCheckpointBase;
   }
-  if (uidMatchesAny(uid, kFoodUids, sizeof(kFoodUids) / sizeof(kFoodUids[0]))) {
+  if (uidMatches(uid, kUidFood)) {
     return kCheckpointFood;
   }
-  if (uidMatchesAny(uid,
-                    kMedicineUids,
-                    sizeof(kMedicineUids) / sizeof(kMedicineUids[0]))) {
+  if (uidMatches(uid, kUidMedicine)) {
     return kCheckpointMedicine;
   }
-  if (uidMatchesAny(uid, kOxygenUids, sizeof(kOxygenUids) / sizeof(kOxygenUids[0]))) {
+  if (uidMatches(uid, kUidOxygen)) {
     return kCheckpointOxygen;
   }
-  if (uidMatchesAny(uid,
-                    kHabitatUids,
-                    sizeof(kHabitatUids) / sizeof(kHabitatUids[0]))) {
+  if (uidMatches(uid, kUidHabitat)) {
     return kCheckpointHabitat;
   }
 
@@ -462,35 +418,6 @@ void printRfidUidAndCheckpoint(const String& uid, const char* checkpoint) {
 }
 
 /**
- * @brief Returns true when an RFID read is a recent duplicate that should stay quiet.
- */
-bool isDuplicateRfidRead(const String& normalizedUid,
-                         const char* checkpoint,
-                         const unsigned long now) {
-  if (now - lastRfidAcceptedAtMs >= kRfidDebounceMs) {
-    return false;
-  }
-
-  if (normalizedUid.length() > 0 && strcmp(normalizedUid.c_str(), lastProcessedRfidUid) == 0) {
-    return true;
-  }
-
-  return strcmp(checkpoint, kCheckpointUnknown) != 0 &&
-         strcmp(checkpoint, lastProcessedCheckpoint) == 0;
-}
-
-/**
- * @brief Stores the last accepted RFID read for duplicate suppression.
- */
-void rememberRfidRead(const String& normalizedUid,
-                      const char* checkpoint,
-                      const unsigned long now) {
-  normalizedUid.toCharArray(lastProcessedRfidUid, sizeof(lastProcessedRfidUid));
-  copyStatusField(lastProcessedCheckpoint, sizeof(lastProcessedCheckpoint), checkpoint);
-  lastRfidAcceptedAtMs = now;
-}
-
-/**
  * @brief Publishes a firmware log message when MQTT is connected.
  *
  * @param message Null-terminated event text for mars/supar1/log.
@@ -612,7 +539,6 @@ void disableLineFollowing(const bool stopMotors) {
   missionNavigationActive = false;
   missionPhase = MISSION_PHASE_IDLE;
   lineFollowPausedUntilMs = 0;
-  rfidApproachUntilMs = 0;
   setTargetCheckpoint(kCheckpointUnknown);
   copyStatusField(currentCargo, sizeof(currentCargo), "NONE");
   copyStatusField(pickupCheckpoint, sizeof(pickupCheckpoint), "NONE");
@@ -637,7 +563,6 @@ void startLineFollowing() {
   lastLineFollowUpdateMs = 0;
   lastLineFollowRfidScanMs = 0;
   lineFollowPausedUntilMs = 0;
-  rfidApproachUntilMs = 0;
   currentLineFollowState = LINE_STATE_UNKNOWN;
   lastLineDirection = LINE_DIR_CENTER;
   navigationDirection = NAVIGATION_FORWARD_ROUTE;
@@ -657,7 +582,6 @@ void startLineFollowTest() {
   lastLineFollowUpdateMs = 0;
   lastLineFollowRfidScanMs = 0;
   lineFollowPausedUntilMs = 0;
-  rfidApproachUntilMs = 0;
   currentLineFollowState = LINE_STATE_UNKNOWN;
   lastLineDirection = LINE_DIR_CENTER;
   navigationDirection = NAVIGATION_FORWARD_ROUTE;
@@ -672,7 +596,6 @@ void startLineFollowTest() {
 void resetMissionNavigationState() {
   missionNavigationActive = false;
   missionPhase = MISSION_PHASE_IDLE;
-  rfidApproachUntilMs = 0;
   setTargetCheckpoint(kCheckpointUnknown);
   copyStatusField(currentCargo, sizeof(currentCargo), "NONE");
   copyStatusField(pickupCheckpoint, sizeof(pickupCheckpoint), "NONE");
@@ -689,7 +612,6 @@ void completePickupAtCheckpoint(const char* checkpoint) {
   setCurrentCheckpoint(checkpoint);
   missionPhase = MISSION_PHASE_PICKUP_PAUSE;
   setRoverState("IDLE");
-  rfidApproachUntilMs = 0;
 
   char pickedUpStatus[sizeof(cargoStatus)] = {};
   snprintf(pickedUpStatus, sizeof(pickedUpStatus), "PICKED_UP_%s", currentCargo);
@@ -716,7 +638,6 @@ void completeMissionAtCheckpoint(const char* checkpoint) {
   missionNavigationActive = false;
   missionPhase = MISSION_PHASE_DELIVERED;
   lineFollowPausedUntilMs = 0;
-  rfidApproachUntilMs = 0;
   setCurrentCheckpoint(checkpoint);
   setRoverState("IDLE");
 
@@ -776,13 +697,7 @@ void scanRfidCheckpointDuringLineFollow(const unsigned long now) {
 
   captureLastRfidUid();
   const String detectedUid = rfidReader.readUID();
-  const String normalizedUid = normalizeUid(detectedUid);
   const char* checkpoint = checkpointForUid(detectedUid);
-  if (isDuplicateRfidRead(normalizedUid, checkpoint, now)) {
-    return;
-  }
-
-  rememberRfidRead(normalizedUid, checkpoint, now);
   printRfidUidAndCheckpoint(detectedUid, checkpoint);
 
   Serial.print("RFID_CHECKPOINT:");
@@ -859,7 +774,6 @@ void updateLineFollower() {
   const bool leftDetected = readings.left == 1;
   const bool centerDetected = readings.center == 1;
   const bool rightDetected = readings.right == 1;
-  const bool rfidApproachActive = now < rfidApproachUntilMs;
 
   if (!leftDetected && centerDetected && !rightDetected) {
     logLineFollowState(LINE_STATE_CENTER);
@@ -1058,7 +972,6 @@ void runMission(const char* command) {
   lastLineFollowUpdateMs = 0;
   lastLineFollowRfidScanMs = 0;
   lineFollowPausedUntilMs = 0;
-  rfidApproachUntilMs = 0;
   currentLineFollowState = LINE_STATE_UNKNOWN;
   lastLineDirection = LINE_DIR_CENTER;
   setRoverState("RUNNING");
