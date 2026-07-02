@@ -884,11 +884,6 @@ void updateLineFollower() {
   }
 
   const unsigned long now = millis();
-  scanRfidCheckpointDuringLineFollow(now);
-  if (!lineFollowEnabled) {
-    return;
-  }
-
   updateMissionPickupPause(now);
   if (missionPhase == MISSION_PHASE_PICKUP_PAUSE) {
     return;
